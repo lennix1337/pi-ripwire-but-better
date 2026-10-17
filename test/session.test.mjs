@@ -1,0 +1,64 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { loadExtensions } from '../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js';
+import { execute } from '../src/core.mjs';
+
+async function flow(t, optchat) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'rw-session-'));
+  const old = { OPTCHAT_HOME: process.env.OPTCHAT_HOME, PI_RIPWIRE_EVIDENCE_DIR: process.env.PI_RIPWIRE_EVIDENCE_DIR };
+  process.env.OPTCHAT_HOME = path.join(dir, 'optchat'); process.env.PI_RIPWIRE_EVIDENCE_DIR = path.join(dir, 'evidence');
+  t.after(async () => { for (const [key, value] of Object.entries(old)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } await rm(dir, { recursive: true, force: true }); });
+  const root = path.join(dir, 'repo'); await mkdir(path.join(root, '.pi'), { recursive: true });
+  await writeFile(path.join(root, '.pi/checks.json'), JSON.stringify({ version: 1, checks: { smoke: { description: 'Offline fixture', argv: [process.execPath, '-e', "console.log('native-tool-result')"], timeoutMs: 3000 } } }));
+  for (const args of [['init'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture']]) assert.equal((await execute('git', args, { cwd: root })).code, 0);
+  const paths = [fileURLToPath(new URL('../src/index.ts', import.meta.url))];
+  if (optchat) {
+    const profiles = await import(pathToFileURL(path.join(optchat, 'src/profiles.ts')).href);
+    profiles.createProfile('fixture'); const profile = profiles.profilePath('fixture');
+    profiles.saveConfig(profile, { ...profiles.loadConfig(profile), syncStatus: false, syncOptMem: false, compactor: { provider: 'fixture', model: 'fixture', thinking: 'off' }, subagent: { provider: 'fixture', model: 'fixture', thinking: 'off' } });
+    paths.unshift(path.join(optchat, 'src/index.ts'));
+  }
+  const loaded = await loadExtensions(paths, root); assert.deepEqual(loaded.errors, []);
+  const runtime = await ModelRuntime.create({ authPath: path.join(dir, 'auth.json'), modelsPath: null, modelsStorePath: path.join(dir, 'models.json'), refreshOnCreate: false });
+  const requests = []; let round = 0;
+  runtime.registerProvider('fixture', {
+    baseUrl: 'https://invalid.local', apiKey: 'synthetic', api: 'openai-completions',
+    models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 }],
+    streamSimple(model, context) {
+      const prompt = context.messages.at(-1)?.content;
+      const text = typeof prompt === 'string' ? prompt : Array.isArray(prompt) ? prompt.filter(x => x.type === 'text').map(x => x.text).join('') : '';
+      const compacting = text.includes('\n\nCompaction:');
+      if (!compacting) requests.push(JSON.stringify(context));
+      const content = compacting ? [{ type: 'text', text: 'talk: offline fixture evidence' }] : round++ === 0 ? [{ type: 'toolCall', id: 'check-fixture', name: 'project_checks', arguments: { root, name: 'smoke' } }] : [{ type: 'text', text: 'fixture-finished' }];
+      const message = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: !compacting && round === 1 ? 'toolUse' : 'stop', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, content };
+      const stream = createAssistantMessageEventStream(); queueMicrotask(() => { stream.push({ type: 'start', partial: message }); stream.push({ type: 'done', reason: message.stopReason, message }); stream.end(); }); return stream;
+    },
+  });
+  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, cacheWarming: 'off', retry: { enabled: false } });
+  const loader = new DefaultResourceLoader({ cwd: root, agentDir: path.join(dir, 'agent'), settingsManager, noExtensions: true, noContextFiles: true, noSkills: true, noPromptTemplates: true, extensionsOverride: () => loaded });
+  await loader.reload();
+  const { session } = await createAgentSession({ cwd: root, modelRuntime: runtime, model: runtime.getModel('fixture', 'fixture'), resourceLoader: loader, settingsManager, sessionManager: SessionManager.create(root, path.join(dir, 'sessions')) });
+  const errors = [];
+  try {
+    if (optchat) { session.extensionRunner.setFlagValue('optchat-profile', 'fixture'); session.extensionRunner.setFlagValue('optchat-connect', 'off'); }
+    await session.bindExtensions({ mode: 'print', uiContext: session.extensionRunner.getUIContext(), onError: error => errors.push(error.error) });
+    assert.ok(session.getActiveToolNames().includes('project_checks'));
+    await session.prompt('Run the offline fixture check.');
+    assert.equal(requests.length, 2);
+    assert.match(requests[1], /native-tool-result/); assert.match(requests[1], /passed/);
+    const result = session.state.messages.find(message => message.role === 'toolResult' && message.toolName === 'project_checks');
+    assert.ok(result); assert.equal(result.isError, false);
+    const receipt = JSON.parse(result.content[0].text); assert.equal(receipt.status, 'passed'); assert.ok(receipt.source.digest);
+    if (optchat) { assert.match(requests[0], /You are OptChat/); assert.ok(session.getActiveToolNames().includes('zoom')); }
+    assert.deepEqual(errors, []);
+  } finally { await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); session.dispose(); }
+}
+
+test('Pi SDK model-tool-execution-result loop works with no network or inference', t => flow(t));
+test('real OptChat projection preserves the native tool evidence', { skip: !process.env.PI_RIPWIRE_OPTCHAT }, t => flow(t, process.env.PI_RIPWIRE_OPTCHAT));

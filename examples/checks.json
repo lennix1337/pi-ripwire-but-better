@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "checks": {
+    "node-tests": {
+      "description": "Offline Node tests; adapt the path to your project",
+      "argv": ["node", "--test", "test/core.test.mjs"],
+      "timeoutMs": 30000
+    },
+    "rust-check": {
+      "description": "Rust compile check using existing dependency cache; no network",
+      "argv": ["cargo", "check", "--locked", "--offline"],
+      "timeoutMs": 120000
+    },
+    "dotnet-build": {
+      "description": "Build the configured solution without dependency restore",
+      "argv": ["dotnet", "build", "--no-restore", "--verbosity", "minimal"],
+      "timeoutMs": 120000
+    },
+    "cmake-build": {
+      "description": "Incremental build of an already configured build directory with bounded jobs",
+      "argv": ["cmake", "--build", "build", "--parallel", "2"],
+      "timeoutMs": 300000
+    }
+  }
+}
