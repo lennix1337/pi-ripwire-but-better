@@ -1,15 +1,15 @@
 {
-  "name": "@lennix1337/pi-ripwire",
+  "name": "@lennix1337/pi-ripwire-but-better",
   "version": "0.1.0",
   "type": "module",
   "description": "Native Pi tools for bounded Ripwire navigation and freshness-aware project check evidence.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lennix1337/pi-ripwire.git"
+    "url": "git+https://github.com/lennix1337/pi-ripwire-but-better.git"
   },
-  "homepage": "https://github.com/lennix1337/pi-ripwire#readme",
-  "bugs": "https://github.com/lennix1337/pi-ripwire/issues",
+  "homepage": "https://github.com/lennix1337/pi-ripwire-but-better#readme",
+  "bugs": "https://github.com/lennix1337/pi-ripwire-but-better/issues",
   "publishConfig": { "access": "public" },
   "keywords": [
     "pi-package",

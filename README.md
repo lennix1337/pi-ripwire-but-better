@@ -1,4 +1,4 @@
-# Pi Ripwire tools
+# Pi Ripwire But Better
 
 Local, native Pi integration: structural navigation, explicit project checks, and bounded evidence. Independent of OptChat; works through its normal tool-result path too. Ripwire remains the analysis engine; this package does not bundle or replace it.
 
@@ -20,7 +20,7 @@ Pi's [package gallery](https://pi.dev/packages) discovers npm packages tagged `p
 
 For an explicitly authorized public release, first confirm the npm account owns the `@lennix1337` scope, review `npm pack --dry-run`, run the checks above/below, then publish with `npm publish --access public` (npm may require 2FA). Make the repository public before offering its source to users. Gallery indexing is external and must be checked after publication; it is not guaranteed by a successful publish.
 
-Users can then install with `pi install npm:@lennix1337/pi-ripwire`. Ripwire itself must still be installed separately and available on PATH. No npm publication is performed by pushing this repository.
+Users can then install with `pi install npm:@lennix1337/pi-ripwire-but-better`. Ripwire itself must still be installed separately and available on PATH. No npm publication is performed by pushing this repository.
 
 ## Agent interface (AXI principles)
 
@@ -89,3 +89,7 @@ PI_RIPWIRE_OPTCHAT=C:/projetos/pi-optchat node --experimental-transform-types --
 Tests execute real subprocesses and the real Pi SDK model→tool→result loop with an offline fixture provider. No OAuth, credentials, grading or paid inference. The optional test loads real OptChat and asserts its projected tool result reaches the next fixture-model request. See `docs/STATUS.md` for measured local evidence and limits.
 
 No whole-agent speed, cache-hit or model-quality improvement has been established. Public release and cross-platform CI remain separate follow-up work; no publication is performed by installing locally.
+
+## Name and compatibility
+
+This package is **Pi Ripwire But Better**, distinct from `elrond298/pi-ripwire`. The name is branding, not a claim of measured superiority. Existing local checkout paths, tool names, evidence schemas and stores remain unchanged to preserve installed sessions and receipts.
