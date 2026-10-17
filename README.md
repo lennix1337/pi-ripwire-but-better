@@ -22,6 +22,12 @@ For an explicitly authorized public release, first confirm the npm account owns 
 
 Users can then install with `pi install npm:@lennix1337/pi-ripwire-but-better`. Ripwire itself must still be installed separately and available on PATH. No npm publication is performed by pushing this repository.
 
+### Trusted Publishing (after the first release)
+
+In npm package Settings → Trusted Publisher, select GitHub Actions and set owner `lennix1337`, repository `pi-ripwire-but-better`, workflow filename `publish.yml`, no environment, and allow direct `npm publish`. This npm-side authorization must be saved by a package owner; committing the workflow alone does not grant permission.
+
+The manual **Publish to npm** workflow (`.github/workflows/publish.yml`) runs only from `main`, uses Node 24 and GitHub OIDC (`id-token: write`), and checks types/tests before publishing. No npm token secret is needed. Bump the package version and lockfile before a later release, then run it from GitHub Actions. The repository is private, so provenance is disabled. The first release and the npm-side trusted-publisher configuration still require owner approval.
+
 ## Agent interface (AXI principles)
 
 Small, explicit interfaces; discover capabilities before execution; progressive disclosure; stable structured results; actionable errors; no hidden side effects or success inflation. This is a design approach, not a claim of compliance with a separate AXI standard.
