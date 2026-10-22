@@ -30,7 +30,7 @@ The manual **Publish to npm** workflow (`.github/workflows/publish.yml`) runs on
 
 ## Agent interface (AXI principles)
 
-Small, explicit interfaces; discover capabilities before execution; progressive disclosure; stable structured results; actionable errors; no hidden side effects or success inflation. This is a design approach, not a claim of compliance with a separate AXI standard.
+Small, explicit interfaces; discover capabilities before execution; progressive disclosure; stable structured results; actionable errors; no hidden side effects or success inflation. The shared `axi-interfaces` skill adapts AXI goals to native Pi contracts, not CLI output-format certification. Unknown tool keys are rejected by Pi validation; incomplete navigation is an error with an inspectable receipt. Missing evidence offers recovery without re-running commands or exposing the store path. Nonzero navigation exits (including `quality` and `test_gate`) remain inspectable findings rather than native execution errors; read the receipt's status and interpretation.
 
 | Tool | Start here | Result |
 | --- | --- | --- |

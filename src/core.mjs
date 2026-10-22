@@ -134,8 +134,14 @@ function page(output, offset, limit) {
 export async function evidence({ id, offset = 0, limit = 6000, store = defaultStore() }) {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid evidence id');
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 4 || limit > 12000) throw new Error('Invalid page bounds');
-  const receipt = JSON.parse(await readFile(path.join(store, `${id}.json`), 'utf8'));
-  const file = await open(path.join(store, `${id}.log`), 'r');
+  let receipt; let file;
+  try {
+    receipt = JSON.parse(await readFile(path.join(store, `${id}.json`), 'utf8'));
+    file = await open(path.join(store, `${id}.log`), 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('No saved evidence for this id; use an id from a ripwire or project_checks receipt on this machine. Nothing was re-run.');
+    throw error;
+  }
   try {
     const { size } = await file.stat();
     // One lookahead byte identifies a UTF-8 boundary without loading the full log.

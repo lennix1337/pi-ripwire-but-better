@@ -62,6 +62,18 @@ test('source-changing command cannot claim pass', async t => {
   assert.equal((await projectChecks({ ...f, name: 'edit' })).status, 'source_changed');
 });
 
+test('missing saved evidence gives a safe recovery without replay or local paths', async t => {
+  const { store } = await fixture(t);
+  const id = '00000000-0000-4000-8000-000000000000';
+  const safeError = error => /No saved evidence/.test(error.message) && /Nothing was re-run/.test(error.message) && !error.message.includes(store);
+  await assert.rejects(evidence({ store, id }), safeError);
+  await mkdir(store, { recursive: true });
+  await writeFile(path.join(store, `${id}.json`), JSON.stringify({ id }));
+  await assert.rejects(evidence({ store, id }), safeError, 'a missing log is also unavailable evidence');
+  await writeFile(path.join(store, `${id}.json`), '{invalid-json');
+  await assert.rejects(evidence({ store, id }), SyntaxError, 'corruption must not be hidden as a missing receipt');
+});
+
 test('failure is not retried, receipt remains available', async t => {
   const f = await fixture(t, { fail: { description: 'Fail once', argv: [process.execPath, '-e', 'process.exit(7)'], timeoutMs: 2000 } });
   const result = await projectChecks({ ...f, name: 'fail' });
