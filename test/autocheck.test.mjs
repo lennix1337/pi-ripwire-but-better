@@ -39,6 +39,30 @@ test('a burst of edits runs each onEdit recipe once and the explicit call reuses
   assert.deepEqual(runs, ['quick']);
 });
 
+// Pi runs a batch of tool calls concurrently, so their tool_result hooks overlap (seen live 2026-10-24: two
+// parallel edits in pi-optchat produced no autocheck at all, the same edits in sequence did).
+test('concurrent edits from one tool batch still run the onEdit recipes once', async t => {
+  const f = await repo(t, { quick: node("console.log('quick-ok')", { onEdit: true }) });
+  const { runs, run } = recorder(f.store);
+  const auto = createAutocheck({ run, debounceMs: 50 }); t.after(() => auto.dispose());
+  const file = path.join(f.root, 'src/a.ts');
+  await writeFile(file, 'two');
+  await Promise.all([auto.edited(file), auto.edited(file)]);
+  let notes = [];
+  await until(() => (notes = notes.concat(auto.drainNotes())).length > 0);
+  assert.deepEqual(runs, ['quick']);
+  assert.ok((await auto.claim(f.root, 'quick')).reused);
+});
+
+test('a run whose sources change without a new edit is reported, not dropped', async t => {
+  const f = await repo(t, { quick: node("require('fs').writeFileSync('src/generated.ts', String(Date.now()))", { onEdit: true }) });
+  const auto = createAutocheck({ run: recorder(f.store).run, debounceMs: 20 }); t.after(() => auto.dispose());
+  await auto.edited(path.join(f.root, 'src/a.ts'));
+  let notes = [];
+  await until(() => (notes = notes.concat(auto.drainNotes())).length > 0);
+  assert.match(notes[0], /\[autocheck\] repo quick ended source_changed \(receipt [\w-]+\); nothing to reuse/);
+});
+
 test('a result is not reused once the sources change', async t => {
   const f = await repo(t, { quick: node("console.log('ok')", { onEdit: true }) });
   const auto = createAutocheck({ run: recorder(f.store).run, debounceMs: 20 }); t.after(() => auto.dispose());

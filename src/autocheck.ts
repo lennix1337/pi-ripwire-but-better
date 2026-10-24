@@ -23,25 +23,35 @@ export function createAutocheck({ run = projectChecks, fingerprintOf = fingerpri
   const roots = new Map(); const dirs = new Map(); const unconfigured = new Set(); let notes = [];
   const state = root => roots.get(root) ?? roots.set(root, { timer: null, controller: null, running: null, runningName: null, halt: false, results: new Map() }).get(root);
 
+  // Runs one recipe of a sweep and records its note. Returns false when the sweep must stop.
+  async function runOne(root, s, name, signal) {
+    s.runningName = name;
+    s.running = run({ root, name, signal, speculative: true });
+    let result;
+    try { result = await s.running; } catch (error) {
+      // CHECK_ACTIVE: an explicit or foreign check owns the repository; it will produce its own evidence.
+      // An aborted sweep was superseded by a newer edit or an explicit call.
+      if (error.code !== 'CHECK_ACTIVE' && !signal.aborted) notes.push(`[autocheck] ${path.basename(root)} ${name} could not run: ${error.message}`);
+      return false;
+    } finally { s.running = null; s.runningName = null; }
+    if (result.status !== 'passed' && result.status !== 'failed') {
+      // A newer edit already reschedules a superseded run; anything else (sources changed by a tool or the
+      // recipe itself, timeout, uncertain exit) leaves no result, so the agent must hear about it.
+      if (!signal.aborted) notes.push(`[autocheck] ${path.basename(root)} ${name} ended ${result.status} (receipt ${result.id}); nothing to reuse, so project_checks will run it again.`);
+      return false;
+    }
+    s.results.set(name, { result, at: now() });
+    notes.push(note(result));
+    return true;
+  }
+
   async function sweep(root, names) {
     const s = state(root);
     // A run cancelled by the previous edit still holds the lock until its process exits.
     if (s.running) await s.running.catch(() => { /* Its own sweep already handled the outcome. */ });
     const controller = new AbortController(); s.controller = controller; s.halt = false;
     for (const name of names) {
-      if (controller.signal.aborted || s.halt) break;
-      s.runningName = name;
-      s.running = run({ root, name, signal: controller.signal, speculative: true });
-      let result;
-      try { result = await s.running; } catch (error) {
-        // CHECK_ACTIVE: an explicit or foreign check owns the repository; it will produce its own evidence.
-        // An aborted sweep was superseded by a newer edit or an explicit call.
-        if (error.code !== 'CHECK_ACTIVE' && !controller.signal.aborted) notes.push(`[autocheck] ${path.basename(root)} ${name} could not run: ${error.message}`);
-        break;
-      } finally { s.running = null; s.runningName = null; }
-      if (result.status !== 'passed' && result.status !== 'failed') break;
-      s.results.set(name, { result, at: now() });
-      notes.push(note(result));
+      if (controller.signal.aborted || s.halt || !(await runOne(root, s, name, controller.signal))) break;
     }
     if (s.controller === controller) s.controller = null;
   }

@@ -62,27 +62,26 @@ async function flow(t, optchat) {
 
 test('Pi SDK model-tool-execution-result loop works with no network or inference', t => flow(t));
 
-test('an edit by the model triggers the onEdit check, and the explicit call reuses its receipt', async t => {
+// `edits` is the first assistant message: one tool batch, which Pi executes concurrently.
+async function onEditFlow(t, edits) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'rw-onedit-'));
   const old = process.env.PI_RIPWIRE_EVIDENCE_DIR; process.env.PI_RIPWIRE_EVIDENCE_DIR = path.join(dir, 'evidence');
   t.after(async () => { if (old === undefined) delete process.env.PI_RIPWIRE_EVIDENCE_DIR; else process.env.PI_RIPWIRE_EVIDENCE_DIR = old; await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); });
   const root = path.join(dir, 'repo'); await mkdir(path.join(root, '.pi'), { recursive: true });
   const counter = path.join(dir, 'runs.txt');
   await writeFile(path.join(root, '.pi/checks.json'), JSON.stringify({ version: 1, checks: { types: { description: 'Counts its runs', onEdit: true, argv: [process.execPath, '-e', `require('fs').appendFileSync(${JSON.stringify(counter)}, 'x'); console.log('types-ok')`], timeoutMs: 10000 } } }));
+  await mkdir(path.join(root, 'src')); await writeFile(path.join(root, 'src/a.ts'), 'export const a = 0;\n');
   for (const args of [['init'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture']]) assert.equal((await execute('git', args, { cwd: root })).code, 0);
   const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], root); assert.deepEqual(loaded.errors, []);
   const runtime = await ModelRuntime.create({ authPath: path.join(dir, 'auth.json'), modelsPath: null, modelsStorePath: path.join(dir, 'models.json'), refreshOnCreate: false });
-  const script = [
-    { type: 'toolCall', id: 'edit-1', name: 'write', arguments: { path: 'src/a.ts', content: 'export const a = 1;\n' } },
-    { type: 'toolCall', id: 'check-1', name: 'project_checks', arguments: { root, name: 'types' } },
-  ];
+  const script = [edits, [{ type: 'toolCall', id: 'check-1', name: 'project_checks', arguments: { root, name: 'types' } }]];
   let round = 0;
   runtime.registerProvider('fixture', {
     baseUrl: 'https://invalid.local', apiKey: 'synthetic', api: 'openai-completions',
     models: [{ id: 'fixture', name: 'Fixture', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 }],
     streamSimple(model) {
       const step = script[round++];
-      const message = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: step ? 'toolUse' : 'stop', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, content: [step ?? { type: 'text', text: 'done' }] };
+      const message = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: step ? 'toolUse' : 'stop', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, content: step ?? [{ type: 'text', text: 'done' }] };
       // The second step waits past the 0.75 s debounce, as a model thinking between tool calls would.
       const stream = createAssistantMessageEventStream(); setTimeout(() => { stream.push({ type: 'start', partial: message }); stream.push({ type: 'done', reason: message.stopReason, message }); stream.end(); }, round === 2 ? 4000 : 0); return stream;
     },
@@ -99,5 +98,15 @@ test('an edit by the model triggers the onEdit check, and the explicit call reus
     assert.equal(receipt.status, 'passed'); assert.equal(receipt.trigger, 'onEdit'); assert.ok(receipt.reused);
     assert.equal((await readFile(counter, 'utf8')).length, 1, 'the check ran once, in the background');
   } finally { await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); session.dispose(); }
-});
+}
+
+test('an edit by the model triggers the onEdit check, and the explicit call reuses its receipt', t => onEditFlow(t, [
+  { type: 'toolCall', id: 'edit-1', name: 'write', arguments: { path: 'src/a.ts', content: 'export const a = 1;\n' } },
+]));
+
+// Seen live 2026-10-24: two edits in one batch produced no autocheck; the same edits one per turn did.
+test('two edits in one parallel tool batch still trigger the onEdit check', t => onEditFlow(t, [
+  { type: 'toolCall', id: 'edit-1', name: 'edit', arguments: { path: 'src/a.ts', edits: [{ oldText: 'a = 0;', newText: 'a = 0; // probe' }] } },
+  { type: 'toolCall', id: 'edit-2', name: 'edit', arguments: { path: 'src/a.ts', edits: [{ oldText: 'a = 0; // probe', newText: 'a = 0;' }] } },
+]));
 test('real OptChat projection preserves the native tool evidence', { skip: !process.env.PI_RIPWIRE_OPTCHAT }, t => flow(t, process.env.PI_RIPWIRE_OPTCHAT));

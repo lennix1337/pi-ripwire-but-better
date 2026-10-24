@@ -33,6 +33,21 @@ test('source fingerprint catches tracked, staged, untracked changes', async t =>
   await writeFile(path.join(root, 'new.txt'), 'new'); assert.notEqual((await fingerprint(root)).digest, before.digest);
 });
 
+// Seen live 2026-10-24 (receipts d0a6f5e0, c2c2cbb6): an edit that restored a file to its committed content made
+// the first `git diff` print a core.autocrlf warning on stderr and refresh the index, so the next fingerprint
+// differed and the onEdit run ended source_changed. Git warnings are not source.
+test('source fingerprint ignores Git warnings that vanish once the index is refreshed', async t => {
+  const { root } = await fixture(t);
+  await execute('git', ['config', 'core.autocrlf', 'true'], { cwd: root });
+  await writeFile(path.join(root, 'lf.ts'), 'a\nb\n'); await execute('git', ['add', 'lf.ts'], { cwd: root });
+  await execute('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'lf'], { cwd: root });
+  const clean = await fingerprint(root);
+  await new Promise(resolve => setTimeout(resolve, 1100)); // A new mtime second marks the index entry stat-dirty.
+  await writeFile(path.join(root, 'lf.ts'), 'a\nb\n');
+  assert.equal((await fingerprint(root)).digest, clean.digest);
+  assert.equal((await fingerprint(root)).digest, clean.digest);
+});
+
 test('list never executes; named check persists bounded paged evidence', async t => {
   const f = await fixture(t);
   assert.equal((await projectChecks(f)).checks.length, 1);

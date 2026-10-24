@@ -40,10 +40,11 @@ export async function reapStaleHeadTrees({ bases = cacheBases(), alive = pidAliv
   return removed;
 }
 
-export async function execute(command, args, { cwd, signal, timeout = 30000, limit = maxLog } = {}) {
+// `stderr: false` drops diagnostics from the output, for callers that hash it as data.
+export async function execute(command, args, { cwd, signal, timeout = 30000, limit = maxLog, stderr = true } = {}) {
   if (signal?.aborted) throw new Error('Cancelled before execution');
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', stderr ? 'pipe' : 'ignore'] });
     const chunks = []; let bytes = 0; let reason; let killTimer;
     const stop = why => {
       if (reason) return;
@@ -57,7 +58,7 @@ export async function execute(command, args, { cwd, signal, timeout = 30000, lim
       }
     };
     const collect = data => { const room = limit - bytes; if (room > 0) chunks.push(data.subarray(0, room)); bytes += data.length; if (bytes > limit) stop('output_limit'); };
-    child.stdout.on('data', collect); child.stderr.on('data', collect);
+    child.stdout.on('data', collect); child.stderr?.on('data', collect);
     const abort = () => stop('cancelled'); signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => stop('timeout'), timeout);
     const cleanup = () => { clearTimeout(timer); clearTimeout(killTimer); signal?.removeEventListener('abort', abort); };
@@ -97,7 +98,8 @@ export function ripwireArgs(root, action, query = '') {
 
 export async function fingerprint(root) {
   const git = async args => {
-    const result = await execute('git', ['-C', root, ...args]);
+    // Warnings such as core.autocrlf's go to stderr and disappear once Git refreshes the index; they are not source.
+    const result = await execute('git', ['-C', root, ...args], { stderr: false });
     if (result.code !== 0 || result.truncated || result.reason) throw new Error('Cannot establish source fingerprint');
     return result.output;
   };
