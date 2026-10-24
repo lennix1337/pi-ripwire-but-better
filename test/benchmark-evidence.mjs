@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
-import { evidence } from '../src/core.mjs';
+import { evidence } from '../src/core.ts';
 
 const baseline = await import(pathToFileURL(process.argv[2]).href);
 const store = await mkdtemp(path.join(os.tmpdir(), 'rw-page-bench-'));

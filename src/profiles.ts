@@ -13,7 +13,7 @@ export const profiles = [
     },
   },
   {
-    name: 'pi-ripwire', sentinels: ['src/core.mjs', 'test/core.test.mjs'],
+    name: 'pi-ripwire', sentinels: ['src/core.ts', 'test/core.test.mjs'],
     checks: {
       'core': { description: 'Offline integration and safety regressions', argv: ['node', '--test', 'test/core.test.mjs'], timeoutMs: 30000 },
     },

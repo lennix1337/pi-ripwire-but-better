@@ -1,14 +1,44 @@
+// @ts-nocheck -- untyped JavaScript kept in a .ts file so Pi's /reload re-reads it (see test/loader.test.mjs); it was never type-checked as .mjs.
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, open, realpath, stat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, open, realpath, stat, readdir, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { profiles } from './profiles.mjs';
+import { profiles } from './profiles.ts';
 
 export const actions = ['map', 'task', 'search', 'symbol', 'callers', 'callees', 'impact', 'exemplar', 'edit_check', 'quality', 'test_gate'];
 const hash = value => createHash('sha256').update(value).digest('hex');
 const maxLog = 4 * 1024 * 1024;
 export const defaultStore = () => process.env.PI_RIPWIRE_EVIDENCE_DIR || path.join(os.homedir(), '.pi', 'agent', 'evidence', 'pi-ripwire');
+// quality/test_gate/edit_check build a HEAD checkout; killing them mid-way is what leaves stale trees behind.
+const slowActions = new Set(['quality', 'test_gate', 'edit_check']);
+export const navigationTimeout = action => slowActions.has(action) ? 120000 : 60000;
+
+export function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
+}
+
+const cacheBases = () => [...new Set([process.env.XDG_CACHE_HOME, process.env.TMPDIR, process.env.TMP, process.env.TEMP, os.tmpdir()].filter(Boolean).map(dir => path.resolve(dir)))];
+
+// Ripwire checks HEAD out into <cache>/ripwire-qhead-<pid> and removes it on a normal exit. A killed run
+// leaves it behind, and every later Ripwire call then slows by seconds (Genexus18MCP grep: 10-21 s with four
+// stale trees, 0.6 s without). Only trees whose owning process is gone are removed.
+export async function reapStaleHeadTrees({ bases = cacheBases(), alive = pidAlive } = {}) {
+  const removed = [];
+  for (const base of bases) {
+    let caches;
+    try { caches = (await readdir(base)).filter(name => /^ripwire-\d+$/.test(name)); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    for (const cache of caches) {
+      for (const entry of await readdir(path.join(base, cache))) {
+        const pid = /^ripwire-qhead-(\d+)$/.exec(entry)?.[1];
+        if (!pid || alive(Number(pid))) continue;
+        await rm(path.join(base, cache, entry), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        removed.push(path.join(base, cache, entry));
+      }
+    }
+  }
+  return removed;
+}
 
 export async function execute(command, args, { cwd, signal, timeout = 30000, limit = maxLog } = {}) {
   if (signal?.aborted) throw new Error('Cancelled before execution');
@@ -117,8 +147,11 @@ async function save(store, id, output, receipt) {
 export async function navigate({ root, action, query = '', signal, store = defaultStore(), binary = 'ripwire' }) {
   root = await repositoryRoot(root);
   const id = randomUUID(); const started = Date.now();
-  const result = await execute(binary, ripwireArgs(root, action, query), { cwd: root, signal });
+  const result = await execute(binary, ripwireArgs(root, action, query), { cwd: root, signal, timeout: navigationTimeout(action) });
   const receipt = { schema: 'pi-ripwire/v1', id, kind: 'navigation', root, action, status: result.reason || (result.code === 0 ? 'completed' : 'nonzero_exit'), exitCode: result.code, elapsedMs: Date.now() - started, capturedBytes: Buffer.byteLength(result.output), truncated: result.truncated, interpretation: 'CLI evidence only; nonzero quality/test-gate codes are not automatically execution failures' };
+  if (result.reason) {
+    try { receipt.reapedHeadTrees = (await reapStaleHeadTrees()).length; } catch (error) { receipt.reapError = error.message; }
+  }
   await save(store, id, result.output, receipt);
   return { ...receipt, ...page(result.output, 0, 6000) };
 }
@@ -161,6 +194,12 @@ export async function evidence({ id, offset = 0, limit = 6000, store = defaultSt
   }
 }
 
+function validateEditTrigger(name, { onEdit, watch }) {
+  if (onEdit !== undefined && typeof onEdit !== 'boolean') throw new Error(`onEdit must be a boolean: ${name}`);
+  const relativePrefix = x => typeof x === 'string' && x && !path.isAbsolute(x) && !x.split(/[\\/]/).includes('..');
+  if (watch !== undefined && (!Array.isArray(watch) || watch.length > 20 || !watch.every(relativePrefix))) throw new Error(`watch must list up to 20 relative path prefixes: ${name}`);
+}
+
 export async function loadRecipes(root) {
   let raw; let origin = '.pi/checks.json';
   try {
@@ -183,27 +222,42 @@ export async function loadRecipes(root) {
     if (!/^[a-z][a-z0-9_-]{0,50}$/.test(name) || !Array.isArray(recipe.argv) || !recipe.argv.length || recipe.argv.some(x => typeof x !== 'string' || !x || x.includes('\0')) || recipe.argv.length > 100) throw new Error(`Invalid recipe: ${name}`);
     if (!Number.isInteger(recipe.timeoutMs) || recipe.timeoutMs < 100 || recipe.timeoutMs > 600000) throw new Error(`Invalid timeout: ${name}`);
     if (typeof recipe.description !== 'string' || recipe.description.length > 300) throw new Error(`Missing bounded description: ${name}`);
+    validateEditTrigger(name, recipe);
     await contained(root, recipe.cwd || '.');
   }
   return { config, digest: hash(raw), origin };
 }
 
-export async function projectChecks({ root, name = '', signal, store = defaultStore() }) {
+async function acquireLock(lockPath) {
+  try { return await open(lockPath, 'wx', 0o600); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  let marker;
+  try { marker = JSON.parse(await readFile(lockPath, 'utf8')); } catch { marker = {}; /* Unreadable or half-written marker: treat as a non-speculative uncertain run. */ }
+  if (marker.speculative && !pidAlive(marker.pid)) {
+    // onEdit recipes are declared side-effect free, so a speculative marker whose Pi process died is safe to clear.
+    await unlink(lockPath);
+    return open(lockPath, 'wx', 0o600);
+  }
+  const error = new Error(marker.speculative ? `An automatic onEdit check (${marker.name}) is running for this repository; call again when it ends.` : 'Prior check active or outcome uncertain. Inspect the marker and processes; never blindly replay.');
+  error.code = 'CHECK_ACTIVE';
+  throw error;
+}
+
+export async function projectChecks({ root, name = '', signal, store = defaultStore(), speculative = false }) {
   root = await repositoryRoot(root);
   const { config, digest, origin } = await loadRecipes(root);
   if (!name) return { schema: 'pi-ripwire/v1', root, origin, checks: Object.entries(config.checks).map(([name, recipe]) => ({ name, ...recipe })), policy: 'Explicit execution only. Review repository recipes before running; commands are trusted project code, not a sandbox. No automatic retries or evidence reuse.' };
   if (!Object.hasOwn(config.checks, name)) throw new Error('Unknown named check; list checks first');
   const recipe = config.checks[name];
   await mkdir(store, { recursive: true });
+  if (speculative && !recipe.onEdit) throw new Error(`Recipe ${name} is not marked onEdit`);
   const lockPath = path.join(store, `${hash(root)}.active`);
-  let lock;
-  try { lock = await open(lockPath, 'wx', 0o600); } catch (error) { if (error.code === 'EEXIST') throw new Error('Prior check active or outcome uncertain. Inspect the marker and processes; never blindly replay.'); throw error; }
+  const lock = await acquireLock(lockPath);
   const id = randomUUID(); const started = Date.now();
   let receipt; let output = ''; let completed = false; let executionStarted = false;
   try {
-    await lock.writeFile(JSON.stringify({ id, pid: process.pid, root, name, started }));
+    await lock.writeFile(JSON.stringify({ id, pid: process.pid, root, name, started, speculative }));
     const before = await fingerprint(root);
-    receipt = { schema: 'pi-ripwire/v1', kind: 'check', id, root, name, origin, argv: recipe.argv, recipeDigest: digest, source: before, runtime: { node: process.version, platform: process.platform }, status: 'running' };
+    receipt = { schema: 'pi-ripwire/v1', kind: 'check', id, root, name, origin, argv: recipe.argv, recipeDigest: digest, source: before, runtime: { node: process.version, platform: process.platform }, status: 'running', ...(speculative && { trigger: 'onEdit' }) };
     await save(store, id, '', receipt);
     const cwd = await contained(root, recipe.cwd || '.');
     if (signal?.aborted) throw new Error('Cancelled before execution');
@@ -213,7 +267,8 @@ export async function projectChecks({ root, name = '', signal, store = defaultSt
     const after = await fingerprint(root);
     const unchanged = before.digest === after.digest && digest === (await loadRecipes(root)).digest;
     receipt = { ...receipt, status: result.reason || (result.signal ? 'outcome_uncertain' : !unchanged ? 'source_changed' : result.code === 0 ? 'passed' : 'failed'), exitCode: result.code, elapsedMs: Date.now() - started, unchanged, after, truncated: result.truncated, interpretation: 'Only this named check; ignored inputs and full product flow not validated' };
-    await save(store, id, output, receipt); completed = !result.reason && result.signal === null;
+    // A speculative run we cancelled has exited (execute resolves on close), so its marker carries no uncertainty.
+    await save(store, id, output, receipt); completed = (!result.reason && result.signal === null) || (speculative && result.reason === 'cancelled');
     return { ...receipt, ...page(output, 0, 4000) };
   } catch (error) {
     if (receipt) {
@@ -224,6 +279,6 @@ export async function projectChecks({ root, name = '', signal, store = defaultSt
   } finally {
     await lock.close();
     // Keep the marker if execution/state capture did not complete. User inspects it before removal.
-    if (completed || !executionStarted) { const { unlink } = await import('node:fs/promises'); await unlink(lockPath); }
+    if (completed || !executionStarted) await unlink(lockPath);
   }
 }

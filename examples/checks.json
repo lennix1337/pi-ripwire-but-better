@@ -4,7 +4,9 @@
     "node-tests": {
       "description": "Offline Node tests; adapt the path to your project",
       "argv": ["node", "--test", "test/core.test.mjs"],
-      "timeoutMs": 30000
+      "timeoutMs": 30000,
+      "onEdit": true,
+      "watch": ["src", "test"]
     },
     "rust-check": {
       "description": "Rust compile check using existing dependency cache; no network",

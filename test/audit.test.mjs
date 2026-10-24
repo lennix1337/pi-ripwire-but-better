@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm, truncate } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
-import { execute, fingerprint, evidence } from '../src/core.mjs';
+import { execute, fingerprint, evidence } from '../src/core.ts';
 
 test('untracked filename/content boundaries cannot collide', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rw-audit-'));

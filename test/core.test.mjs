@@ -3,20 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { execute, repositoryRoot, ripwireArgs, fingerprint, projectChecks, evidence, navigate } from '../src/core.mjs';
+import { execute, repositoryRoot, ripwireArgs, fingerprint, projectChecks, evidence, navigate } from '../src/core.ts';
+import { fixtureRepo } from './fixture.mjs';
 
-async function fixture(t, checks = { smoke: { description: 'Print a fixture result', argv: [process.execPath, '-e', "console.log('fixture-ok')"], timeoutMs: 2000 } }) {
-  const base = await mkdtemp(path.join(os.tmpdir(), 'pi-ripwire-'));
-  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
-  const root = path.join(base, 'repo'); const store = path.join(base, 'store');
-  await mkdir(path.join(root, '.pi'), { recursive: true });
-  await writeFile(path.join(root, '.pi/checks.json'), JSON.stringify({ version: 1, checks }));
-  await writeFile(path.join(root, 'source.txt'), 'initial');
-  for (const args of [['init'], ['add', '.'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture']]) {
-    assert.equal((await execute('git', args, { cwd: root })).code, 0);
-  }
-  return { root, store };
-}
+const fixture = (t, checks = { smoke: { description: 'Print a fixture result', argv: [process.execPath, '-e', "console.log('fixture-ok')"], timeoutMs: 2000 } }) => fixtureRepo(t, checks);
 
 test('fixed arguments keep hostile shell text as data and reject unsupported operations', () => {
   const args = ripwireArgs('/repo', 'search', 'x; rm -rf /');

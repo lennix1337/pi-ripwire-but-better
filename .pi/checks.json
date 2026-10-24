@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "checks": {
+    "typecheck": {
+      "description": "TypeScript check of the extension entry point",
+      "argv": ["node", "node_modules/typescript/bin/tsc", "--noEmit"],
+      "timeoutMs": 120000,
+      "onEdit": true,
+      "watch": ["src", "test", "tsconfig.json"]
+    },
+    "unit": {
+      "description": "Hermetic node:test suite with real subprocesses and an offline Pi SDK session; no inference",
+      "argv": ["node", "--test", "test/*.test.mjs"],
+      "timeoutMs": 300000,
+      "onEdit": true,
+      "watch": ["src", "test", ".pi/checks.json"]
+    }
+  }
+}

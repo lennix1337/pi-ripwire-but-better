@@ -1,7 +1,7 @@
 // Explicit developer smoke; not part of portable npm test. Never calls a model.
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { projectChecks, navigate } from '../src/core.mjs';
+import { projectChecks, navigate } from '../src/core.ts';
 const directory = process.argv[2];
 if (!directory) throw new Error('Supply an external evidence directory');
 await mkdir(directory, { recursive: true });

@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-const core = await import(process.argv[2] ? pathToFileURL(path.resolve(process.argv[2])).href : '../src/core.mjs');
+const core = await import(process.argv[2] ? pathToFileURL(path.resolve(process.argv[2])).href : '../src/core.ts');
 const fileCount = Number(process.env.PI_RIPWIRE_BENCH_FILES || 20);
 if (!Number.isInteger(fileCount) || fileCount < 1 || fileCount > 10000) throw new Error('Invalid benchmark file count');
 const base = await mkdtemp(path.join(os.tmpdir(), 'rw-bench-'));
