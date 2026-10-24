@@ -24,6 +24,15 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      # npm refuses a version that already exists only at the very end; say so before the work.
+      - name: Refuse an already-published version
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "::error::$name@$version is already on npm; bump the version before publishing."
+            exit 1
+          fi
       - run: npm ci
       - run: npm run check
       - run: npm test
