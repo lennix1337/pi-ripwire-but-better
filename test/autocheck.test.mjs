@@ -106,6 +106,29 @@ test('watch prefixes limit which edits trigger a recipe; files outside a reposit
   await until(() => runs.length === 1);
 });
 
+test('a repository without recipes runs nothing and tells the agent once', async t => {
+  const f = await repo(t, {});
+  await rm(path.join(f.root, '.pi'), { recursive: true });
+  const { runs, run } = recorder(f.store);
+  const auto = createAutocheck({ run, debounceMs: 10 }); t.after(() => auto.dispose());
+  await auto.edited(path.join(f.root, 'src/a.ts'));
+  await auto.edited(path.join(f.root, 'src/a.ts'));
+  await settle(100);
+  assert.deepEqual(runs, []);
+  const notes = auto.drainNotes();
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /\[autocheck\] repo has no \.pi\/checks\.json/);
+  await auto.edited(path.join(f.root, 'src/a.ts'));
+  assert.deepEqual(auto.drainNotes(), []);
+});
+
+test('a malformed recipe file still reaches the user', async t => {
+  const f = await repo(t, {});
+  await writeFile(path.join(f.root, '.pi/checks.json'), '{"version": 2}');
+  const auto = createAutocheck({ debounceMs: 10 }); t.after(() => auto.dispose());
+  await assert.rejects(auto.edited(path.join(f.root, 'src/a.ts')), /Expected recipe version 1/);
+});
+
 test('recipe validation rejects malformed onEdit and watch entries', async t => {
   const f = await repo(t, { a: node('1', { onEdit: 'yes' }) });
   await assert.rejects(loadRecipes(f.root), /onEdit must be a boolean/);

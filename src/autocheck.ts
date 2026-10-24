@@ -20,7 +20,7 @@ function note(result) {
 // After an edit, run the repository's onEdit recipes in the background so the explicit project_checks call,
 // or the next tool result, already has the answer. Results are reused only for the identical source digest.
 export function createAutocheck({ run = projectChecks, fingerprintOf = fingerprint, recipesOf = loadRecipes, rootOf = gitRoot, debounceMs = 750, maxAgeMs = 600000, now = Date.now } = {}) {
-  const roots = new Map(); const dirs = new Map(); let notes = [];
+  const roots = new Map(); const dirs = new Map(); const unconfigured = new Set(); let notes = [];
   const state = root => roots.get(root) ?? roots.set(root, { timer: null, controller: null, running: null, runningName: null, halt: false, results: new Map() }).get(root);
 
   async function sweep(root, names) {
@@ -51,7 +51,16 @@ export function createAutocheck({ run = projectChecks, fingerprintOf = fingerpri
     if (!dirs.has(dir)) dirs.set(dir, await rootOf(dir));
     const root = dirs.get(dir);
     if (!root) return;
-    const { config } = await recipesOf(root);
+    let config;
+    try { ({ config } = await recipesOf(root)); } catch (error) {
+      // Nothing to run. Tell the agent once per repository, not the user on every edit.
+      if (error.code !== 'NO_RECIPES') throw error;
+      if (!unconfigured.has(root)) {
+        unconfigured.add(root);
+        notes.push(`[autocheck] ${path.basename(root)} has no .pi/checks.json, so edits run no checks. Add one before running a gate by hand a second time.`);
+      }
+      return;
+    }
     const relative = path.relative(root, path.resolve(file)).split(path.sep).join('/');
     const names = Object.entries(config.checks).filter(([, recipe]) => recipe.onEdit && watched(recipe, relative)).map(([name]) => name);
     if (!names.length) return;

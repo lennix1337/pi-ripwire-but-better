@@ -214,7 +214,7 @@ export async function loadRecipes(root) {
       }));
       if (present.every(Boolean)) { raw = JSON.stringify({ version: 1, checks: profile.checks }); origin = `built-in:${profile.name}`; break; }
     }
-    if (!raw) throw new Error('No recipes found. Add .pi/checks.json using the documented version 1 format. Nothing executed.');
+    if (!raw) throw Object.assign(new Error('No recipes found. Add .pi/checks.json using the documented version 1 format. Nothing executed.'), { code: 'NO_RECIPES' });
   }
   const config = JSON.parse(raw);
   if (config.version !== 1 || !config.checks || typeof config.checks !== 'object' || Array.isArray(config.checks)) throw new Error('Expected recipe version 1 and checks object');
