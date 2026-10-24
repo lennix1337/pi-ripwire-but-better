@@ -78,13 +78,19 @@ test('timeout preserves uncertainty marker and prevents blind replay', async t =
   await assert.rejects(projectChecks({ ...f, name: 'wait' }), /outcome uncertain/);
 });
 
-test('failed launch preserves an inspectable receipt and blocks replay', async t => {
-  const f = await fixture(t, { missing: { description: 'Missing fixture executable', argv: ['pi-ripwire-nonexistent-fixture-executable'], timeoutMs: 1000 } });
-  await assert.rejects(projectChecks({ ...f, name: 'missing' }), /inspect project_evidence id=/);
+test('a launch that never started leaves a not_started receipt and releases the lock', async t => {
+  const f = await fixture(t, {
+    missing: { description: 'Missing fixture executable', argv: ['pi-ripwire-nonexistent-fixture-executable'], timeoutMs: 1000 },
+    smoke: { description: 'Print a fixture result', argv: [process.execPath, '-e', "console.log('fixture-ok')"], timeoutMs: 2000 },
+  });
+  await assert.rejects(projectChecks({ ...f, name: 'missing' }), /ENOENT.*inspect project_evidence id=/);
   const filename = (await readdir(f.store)).find(file => file.endsWith('.json'));
   const receipt = JSON.parse(await readFile(path.join(f.store, filename), 'utf8'));
-  assert.equal(receipt.status, 'outcome_uncertain');
-  await assert.rejects(projectChecks({ ...f, name: 'missing' }), /outcome uncertain/);
+  assert.equal(receipt.status, 'not_started');
+  assert.match(receipt.error, /ENOENT/);
+  // The process never existed (no pid), so nothing is uncertain: the error repeats and other checks still run.
+  await assert.rejects(projectChecks({ ...f, name: 'missing' }), /ENOENT/);
+  assert.equal((await projectChecks({ ...f, name: 'smoke' })).status, 'passed');
 });
 
 test('output cap and pre-aborted execution', async () => {

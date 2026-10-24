@@ -61,7 +61,8 @@ export async function execute(command, args, { cwd, signal, timeout = 30000, lim
     const abort = () => stop('cancelled'); signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => stop('timeout'), timeout);
     const cleanup = () => { clearTimeout(timer); clearTimeout(killTimer); signal?.removeEventListener('abort', abort); };
-    child.on('error', error => { cleanup(); reject(error); });
+    // A spawn failure (ENOENT, EACCES) fires before the process exists: pid is undefined and nothing ran.
+    child.on('error', error => { cleanup(); if (child.pid === undefined) error.notStarted = true; reject(error); });
     child.on('close', (code, terminationSignal) => {
       cleanup(); resolve({ code, signal: terminationSignal, reason, output: Buffer.concat(chunks).toString('utf8'), bytes, truncated: bytes > limit });
     });
@@ -271,6 +272,7 @@ export async function projectChecks({ root, name = '', signal, store = defaultSt
     await save(store, id, output, receipt); completed = (!result.reason && result.signal === null) || (speculative && result.reason === 'cancelled');
     return { ...receipt, ...page(output, 0, 4000) };
   } catch (error) {
+    if (error.notStarted) executionStarted = false;
     if (receipt) {
       await save(store, id, output, { ...receipt, status: executionStarted ? 'outcome_uncertain' : 'not_started', elapsedMs: Date.now() - started, error: error.message });
       throw new Error(`${error.message}; inspect project_evidence id=${id} before retrying`, { cause: error });
