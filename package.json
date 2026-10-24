@@ -22,13 +22,15 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "skills": ["./skills"]
   },
   "files": [
     "src",
     "README.md",
     "LICENSE",
     "examples",
+    "skills",
     "docs/STATUS.md",
     "docs/PERFORMANCE-AUDIT.md"
   ],

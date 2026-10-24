@@ -159,6 +159,19 @@ export async function navigate({ root, action, query = '', signal, store = defau
   return { ...receipt, ...page(result.output, 0, 6000) };
 }
 
+export const residentActions = new Set(['search', 'task']);
+
+/** search/task through a session-owned MCP server; a transport failure is reported, never replayed through the CLI. */
+export async function navigateResident({ root, action, query = '', signal, store = defaultStore(), resident }) {
+  root = await repositoryRoot(root);
+  const id = randomUUID(); const started = Date.now();
+  const result = await resident.navigate(root, action, query, { signal })
+    .catch(error => ({ code: null, output: error.message, truncated: false, reason: 'transport_error' }));
+  const receipt = { schema: 'pi-ripwire/v1', id, kind: 'navigation', root, action, transport: 'mcp-stdio', ...(result.metadata ? { protocol: result.metadata } : {}), status: result.reason || (result.code === 0 ? 'completed' : 'nonzero_exit'), exitCode: result.code, elapsedMs: Date.now() - started, capturedBytes: Buffer.byteLength(result.output), truncated: result.truncated, interpretation: 'Native MCP read result; protocol freshness retained. Not CLI-output parity or full project validation.' };
+  await save(store, id, result.output, receipt);
+  return { ...receipt, ...page(result.output, 0, 6000) };
+}
+
 function page(output, offset, limit) {
   const bytes = Buffer.from(output);
   if (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) throw new Error('Offset must be a UTF-8 code point boundary; use nextOffset');

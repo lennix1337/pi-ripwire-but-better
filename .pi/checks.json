@@ -1,6 +1,16 @@
 {
   "version": 1,
   "checks": {
+    "resident-live": {
+      "description": "Disposable real Ripwire MCP + Pi loader + native tool/evidence + source refresh and shutdown/reload; requires ripwire on PATH, no inference",
+      "argv": ["node", "test/resident-live.mjs"],
+      "timeoutMs": 60000
+    },
+    "resident": {
+      "description": "Real offline MCP subprocess boundaries, lifecycle, queue admission and native evidence integration",
+      "argv": ["node", "--test", "test/resident.test.mjs"],
+      "timeoutMs": 30000
+    },
     "typecheck": {
       "description": "TypeScript check of the extension entry point",
       "argv": ["node", "node_modules/typescript/bin/tsc", "--noEmit"],

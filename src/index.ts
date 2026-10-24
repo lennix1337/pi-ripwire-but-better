@@ -1,18 +1,35 @@
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { actions, navigate, projectChecks, evidence, reapStaleHeadTrees, repositoryRoot } from './core.ts';
+import { actions, navigate, navigateResident, residentActions, projectChecks, evidence, reapStaleHeadTrees, repositoryRoot } from './core.ts';
 import { createAutocheck } from './autocheck.ts';
+import { createResidentPool } from './resident.ts';
 
 const textResult = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: value });
 const failure = (error: unknown) => ({ ...textResult({ status: 'error', message: error instanceof Error ? error.message : String(error), next: 'Correct the input or inspect evidence. Do not blindly retry uncertain checks.' }), isError: true });
 
+type ResidentPool = ReturnType<typeof createResidentPool>;
+const incomplete = ['timeout', 'cancelled', 'output_limit', 'transport_error'];
+
+/** Opt-in (PI_RIPWIRE_RESIDENT=1): search/task go to a session-owned MCP server; every other action stays on the CLI. */
+async function runNavigation(params: { root: string; action: string; query?: string }, signal: AbortSignal | undefined, resident: ResidentPool | undefined) {
+  if (resident === undefined || !residentActions.has(params.action)) {
+    const result = await navigate({ ...params, query: params.query, signal });
+    return { ...textResult(result), isError: incomplete.includes(result.status) };
+  }
+  const result = await navigateResident({ ...params, query: params.query, signal, resident });
+  return { ...textResult(result), isError: incomplete.includes(result.status) || result.exitCode !== 0 };
+}
+
+const residentFromEnv = (env = process.env) => env.PI_RIPWIRE_RESIDENT === '1' ? createResidentPool({ binary: env.PI_RIPWIRE_BINARY || 'ripwire' }) : undefined;
+
 export default function extension(pi: ExtensionAPI) {
   const autocheck = createAutocheck();
+  const resident = residentFromEnv();
   pi.on('session_start', (_event, ctx) => {
     void reapStaleHeadTrees().catch(error => ctx.ui.notify(`pi-ripwire: stale Ripwire HEAD checkouts not removed: ${error.message}`, 'warning'));
   });
-  pi.on('session_shutdown', () => autocheck.dispose());
+  pi.on('session_shutdown', async () => { autocheck.dispose(); await resident?.dispose(); });
   pi.on('tool_result', (event, ctx) => {
     if ((event.toolName === 'edit' || event.toolName === 'write') && !event.isError && typeof event.input.path === 'string') {
       const file = path.resolve(ctx.cwd, event.input.path);
@@ -25,17 +42,14 @@ export default function extension(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: 'ripwire', label: 'Ripwire',
-    description: 'Navigate one Git repository with bounded structural context. Start with task + query; use callers/impact for known symbols. Fixed verbs, no shell. Full output is available through project_evidence. Does not run builds.',
+    description: 'Navigate one Git repository with bounded structural context. Start with task + query; use callers/impact for known symbols. Fixed verbs, no shell. Full output is available through project_evidence. Does not run builds. With PI_RIPWIRE_RESIDENT=1, search/task use session-owned MCP and report transport/freshness; other actions keep CLI.',
     parameters: Type.Object({
       root: Type.String({ description: 'Absolute root of one Git repository, not its parent or subdirectory' }),
       action: Type.Unsafe<string>({ type: 'string', enum: actions }),
       query: Type.Optional(Type.String({ maxLength: 2000, description: 'Task, exact literal, or symbol; required except map/quality/test_gate' })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal) {
-      try {
-        const result = await navigate({ ...params, query: params.query, signal });
-        return { ...textResult(result), isError: ['timeout', 'cancelled', 'output_limit'].includes(result.status) };
-      } catch (error) { return failure(error); }
+      try { return await runNavigation(params, signal, resident); } catch (error) { return failure(error); }
     },
   });
   pi.registerTool({

@@ -43,7 +43,15 @@ Root must be the absolute root of one Git repository, never a parent grouping pr
 
 Navigation returns up to 6 KB of output; checks return up to 4 KB; follow `nextOffset` for more. Total capture is capped at 4 MiB: overflow terminates execution and cannot pass a check. Pages are byte-offset based and capped at 12 KB. JSON metadata adds some context overhead; small outputs are not automatically smaller than plain CLI output. Raw logs are not injected into prompts. No routing hook, always-on primer, automatic retries or inference; the only automatic runs are the opt-in `onEdit` checks below.
 
-Navigation times out after 60 s, or 120 s for `quality`, `test_gate` and `edit_check`, which build a HEAD checkout under `<TMPDIR>/ripwire-<n>/ripwire-qhead-<pid>`. A killed run leaves that checkout behind, and each stale one slows every later Ripwire call by seconds (measured: pi-optchat `grep` 9–14 s with four stale checkouts, 0.3 s without). The extension removes checkouts whose process is gone at session start and after any killed navigation.
+Navigation times out after 60 s, or 120 s for `quality`, `test_gate` and `edit_check`, which build a HEAD checkout under `<TMPDIR>/ripwire-<n>/ripwire-qhead-<pid>`. A killed run leaves that checkout behind, and each stale one slows every later Ripwire call by seconds (measured: pi-optchat `grep` 9–14 s with four stale checkouts, 0.3 s without). The extension removes checkouts whose process is gone at session start and after killed CLI navigation. Resident transport failures close only their owned process and do not run that sweep.
+
+### Resident navigation (opt-in)
+
+For repeated `search`/`task` calls, the packaged `ripwire-resident` skill covers activation, freshness and latency diagnostics. Set `PI_RIPWIRE_RESIDENT=1` in the authorized Pi session environment, then reload/restart that session. `PI_RIPWIRE_BINARY` may select a reviewed executable; it defaults to `ripwire` on PATH. Nothing changes the global executable or persistent configuration automatically.
+
+These two actions use Ripwire's existing stdio MCP server with only `grep,for` enabled. The session owns at most two root-isolated processes and sixteen outstanding requests, serializes requests per process, evicts only idle owners, and closes its processes on shutdown. Other actions keep the CLI path. A receipt identifies `transport:"mcp-stdio"` and retains MCP freshness/index metadata. MCP tool refusals are native errors; transport failures preserve an uncertain receipt and never fall back/replay automatically. Disable the variable and reload to return to CLI-only navigation.
+
+MCP JSON is not byte-identical to CLI XML. Indexed **and off-index** hits remain in the full saved output; `project_evidence` retrieves every page. The explicit offline probe `node test/resident-live.mjs` exercises the real Pi loader, native tools, source-change reindexing, evidence and shutdown/reload on a disposable fixture. This is separate from activation in the current interactive chat. Cold start is not a sub-second guarantee; see `docs/RESIDENT-PLAN.md` in the source checkout for evidence and remaining gates.
 
 ## Any current or future project
 
