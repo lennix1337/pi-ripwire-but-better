@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, truncate } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, truncate, symlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -15,6 +15,19 @@ test('untracked filename/content boundaries cannot collide', async t => {
   await rm(path.join(root, 'a'));
   await writeFile(path.join(root, 'ab'), 'c');
   assert.notEqual((await fingerprint(root)).digest, first.digest);
+});
+
+// GitHub's Windows runners hand out an 8.3 short temp path (RUNNER~1); any root reached
+// through a link or alias must fingerprint the same files as its canonical path.
+test('a root given through a link fingerprints like its canonical path', async t => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'rw-alias-'));
+  t.after(() => rm(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
+  const root = path.join(base, 'repo');
+  const alias = path.join(base, 'alias');
+  assert.equal((await execute('git', ['init', root], { cwd: base })).code, 0);
+  await writeFile(path.join(root, 'untracked.txt'), 'x');
+  await symlink(root, alias, 'junction');
+  assert.equal((await fingerprint(alias)).digest, (await fingerprint(root)).digest);
 });
 
 test('batched fingerprints preserve canonical ordering and reject oversized inputs', async t => {

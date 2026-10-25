@@ -136,7 +136,9 @@ export async function fingerprint(root) {
 
 export async function contained(root, relative) {
   const candidate = await realpath(path.resolve(root, relative));
-  const rel = path.relative(root, candidate);
+  // Compare canonical to canonical: a root reached through a link or an 8.3 short name
+  // would otherwise make every file inside it look like an escape.
+  const rel = path.relative(await realpath(root), candidate);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error('Path escapes project');
   return candidate;
 }
