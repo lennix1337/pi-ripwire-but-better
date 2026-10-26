@@ -98,14 +98,51 @@ test('a launch that never started leaves a not_started receipt and releases the 
     missing: { description: 'Missing fixture executable', argv: ['pi-ripwire-nonexistent-fixture-executable'], timeoutMs: 1000 },
     smoke: { description: 'Print a fixture result', argv: [process.execPath, '-e', "console.log('fixture-ok')"], timeoutMs: 2000 },
   });
-  await assert.rejects(projectChecks({ ...f, name: 'missing' }), /ENOENT.*inspect project_evidence id=/);
+  await assert.rejects(projectChecks({ ...f, name: 'missing' }), error => {
+    assert.match(error.message, /ENOENT.*inspect project_evidence id=/);
+    assert.match(error.message, /Nothing started/);
+    assert.match(error.message, /argv\[0\].*cwd.*PATH/);
+    assert.match(error.message, /No retry or shell fallback/);
+    assert.equal(error.cause.code, 'ENOENT');
+    return true;
+  });
   const filename = (await readdir(f.store)).find(file => file.endsWith('.json'));
   const receipt = JSON.parse(await readFile(path.join(f.store, filename), 'utf8'));
   assert.equal(receipt.status, 'not_started');
   assert.match(receipt.error, /ENOENT/);
+  assert.match(receipt.error, /Nothing started/);
   // The process never existed (no pid), so nothing is uncertain: the error repeats and other checks still run.
   await assert.rejects(projectChecks({ ...f, name: 'missing' }), /ENOENT/);
   assert.equal((await projectChecks({ ...f, name: 'smoke' })).status, 'passed');
+});
+
+test('Windows batch recipes require an explicit shell and never get a shell fallback', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixtureRepo(t, {
+    direct: { description: 'Direct batch shim', argv: ['.\\shim.cmd'], timeoutMs: 2000 },
+    explicit: { description: 'Explicit reviewed shell', argv: [process.env.ComSpec || 'cmd.exe', '/d', '/s', '/c', 'shim.cmd'], timeoutMs: 2000 },
+  }, { 'shim.cmd': '@echo off\r\necho started>>.git\\shim-started\r\necho shim-ok\r\n' });
+  await assert.rejects(projectChecks({ ...f, name: 'direct' }), error => {
+    assert.match(error.message, /Nothing started/);
+    assert.match(error.message, /Windows.*\.cmd.*\.bat.*explicit shell/);
+    return true;
+  });
+  await assert.rejects(readFile(path.join(f.root, '.git/shim-started')), { code: 'ENOENT' });
+  const receiptFile = (await readdir(f.store)).find(file => file.endsWith('.json'));
+  const receipt = JSON.parse(await readFile(path.join(f.store, receiptFile), 'utf8'));
+  assert.equal(receipt.status, 'not_started');
+  assert.match(receipt.error, /explicit shell/);
+  const result = await projectChecks({ ...f, name: 'explicit' });
+  assert.equal(result.status, 'passed');
+  assert.match(result.output, /shim-ok/);
+  assert.equal((await readFile(path.join(f.root, '.git/shim-started'), 'utf8')).trim(), 'started');
+});
+
+test('synchronous spawn validation failures are known not to have started', async () => {
+  await assert.rejects(execute('invalid\0fixture', []), error => {
+    assert.equal(error.code, 'ERR_INVALID_ARG_VALUE');
+    assert.equal(error.notStarted, true);
+    return true;
+  });
 });
 
 test('output cap and pre-aborted execution', async () => {
