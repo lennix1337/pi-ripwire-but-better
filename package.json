@@ -1,14 +1,14 @@
 {
   "name": "@lennix1337/pi-ripwire-but-better",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "description": "Native Pi tools for bounded Ripwire navigation and freshness-aware project check evidence.",
+  "description": "Native Pi extension for Ripwire code navigation, explicit project checks, and bounded, inspectable evidence.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lennix1337/pi-ripwire-but-better.git"
   },
-  "homepage": "https://github.com/lennix1337/pi-ripwire-but-better#readme",
+  "homepage": "https://www.npmjs.com/package/@lennix1337/pi-ripwire-but-better",
   "bugs": "https://github.com/lennix1337/pi-ripwire-but-better/issues",
   "publishConfig": {
     "access": "public"
@@ -23,7 +23,9 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "skills": ["./skills"]
+    "skills": [
+      "./skills"
+    ]
   },
   "files": [
     "src",

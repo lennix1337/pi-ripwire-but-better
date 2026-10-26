@@ -1,32 +1,43 @@
 # Pi Ripwire But Better
 
-Local, native Pi integration: structural navigation, explicit project checks, and bounded evidence. Independent of OptChat; works through its normal tool-result path too. Ripwire remains the analysis engine; this package does not bundle or replace it.
+[![npm version](https://img.shields.io/npm/v/%40lennix1337%2Fpi-ripwire-but-better)](https://www.npmjs.com/package/@lennix1337/pi-ripwire-but-better)
+[![CI](https://github.com/lennix1337/pi-ripwire-but-better/actions/workflows/ci.yml/badge.svg)](https://github.com/lennix1337/pi-ripwire-but-better/actions/workflows/ci.yml)
+
+Native [Pi](https://pi.dev) tools for [Ripwire](https://github.com/redhat-et/ripwire) code navigation, explicit project checks, and bounded, inspectable evidence. Works with or without OptChat. Ripwire is the analysis engine and must be installed separately.
+
+- **Navigate structurally:** find symbols, callers, impact and repo patterns without dumping whole files.
+- **Run reviewed checks:** discover a project's exact recipes, execute one by name, and retain its source identity and exit status.
+- **Recover evidence:** page through saved output without rerunning a command; launch failures explain what did not start.
+- **Opt in to automation:** fast checks on edit and resident MCP navigation are available, not required.
+
+**Links:** [npm package](https://www.npmjs.com/package/@lennix1337/pi-ripwire-but-better) · [repository](https://github.com/lennix1337/pi-ripwire-but-better) · [issues](https://github.com/lennix1337/pi-ripwire-but-better/issues) · [Pi package gallery](https://pi.dev/packages) · [Ripwire engine](https://github.com/redhat-et/ripwire)
+
+The npm package is public. The source repository is currently private, so its GitHub links and CI badge require access. Gallery indexing is external and is not guaranteed by publication.
 
 ## Install
 
-Requires Node >=22.19, Pi 1.2+, Git, and `ripwire` on PATH. Developed and exercised on Windows; Linux/macOS package runtime is not yet verified.
+Requires Node >=22.19, Pi >=1.2, Git, and `ripwire` on PATH. The automated suite runs on Windows and Linux; macOS and every downstream toolchain are not verified.
 
 ```sh
-# From a trusted local checkout; public npm release is not available yet.
-npm ci --ignore-scripts
-pi install C:/projetos/pi-ripwire
+pi install npm:@lennix1337/pi-ripwire-but-better
 ```
 
-Use `/reload` in an existing Pi session. New sessions read the configured package automatically. No model calls, repository scans or builds happen at extension load. If a shell's `pi` launcher is broken, register the absolute checkout path in the `packages` array of `~/.pi/agent/settings.json` instead; preserve its other entries.
+Use `/reload` in an existing Pi session; new sessions load the installed package automatically. No model calls, repository scans or builds happen at extension load.
 
-## Pi package gallery (release not yet published)
+For an authorized source checkout instead:
 
-Pi's [package gallery](https://pi.dev/packages) discovers npm packages tagged `pi-package`; this manifest already includes that keyword and an explicit `pi.extensions` entry. A GitHub push alone does not list the package there.
+```sh
+npm ci --ignore-scripts
+pi install /absolute/path/to/pi-ripwire-but-better
+```
 
-For an explicitly authorized public release, first confirm the npm account owns the `@lennix1337` scope, review `npm pack --dry-run`, run the checks above/below, then publish with `npm publish --access public` (npm may require 2FA). Make the repository public before offering its source to users. Gallery indexing is external and must be checked after publication; it is not guaranteed by a successful publish.
+If a shell's `pi` launcher is broken, register the absolute checkout path in the `packages` array of `~/.pi/agent/settings.json` instead; preserve its other entries.
 
-Users can then install with `pi install npm:@lennix1337/pi-ripwire-but-better`. Ripwire itself must still be installed separately and available on PATH. No npm publication is performed by pushing this repository.
+### Publishing updates (maintainers)
 
-### Trusted Publishing (after the first release)
+The manual **Publish to npm** workflow (`.github/workflows/publish.yml`) runs only from `main`, checks types/tests and the package contents, then publishes using GitHub OIDC. It requires npm Trusted Publishing to authorize owner `lennix1337`, repository `pi-ripwire-but-better`, workflow `publish.yml`, with no environment. The workflow alone does not grant that npm-side permission.
 
-In npm package Settings → Trusted Publisher, select GitHub Actions and set owner `lennix1337`, repository `pi-ripwire-but-better`, workflow filename `publish.yml`, no environment, and allow direct `npm publish`. This npm-side authorization must be saved by a package owner; committing the workflow alone does not grant permission.
-
-The manual **Publish to npm** workflow (`.github/workflows/publish.yml`) runs only from `main`, uses Node 24 and GitHub OIDC (`id-token: write`), and checks types/tests before publishing. No npm token secret is needed. Bump the package version and lockfile before a later release, then run it from GitHub Actions. The repository is private, so provenance is disabled. The first release and the npm-side trusted-publisher configuration still require owner approval.
+Bump both manifest and lockfile to an unpublished version before dispatching the workflow. Verify the registry version, `latest` tag and downloadable package afterwards. Publishing requires explicit authorization; pushing Git commits does not publish to npm. Provenance is disabled while the repository is private.
 
 ## Agent interface (AXI principles)
 
@@ -108,7 +119,7 @@ PI_RIPWIRE_OPTCHAT=C:/projetos/pi-optchat node --experimental-transform-types --
 
 Tests execute real subprocesses and the real Pi SDK model→tool→result loop with an offline fixture provider. No OAuth, credentials, grading or paid inference. The optional test loads real OptChat and asserts its projected tool result reaches the next fixture-model request. See `docs/STATUS.md` for measured local evidence and limits.
 
-No whole-agent speed, cache-hit or model-quality improvement has been established. Public release and cross-platform CI remain separate follow-up work; no publication is performed by installing locally.
+No whole-agent speed, cache-hit or model-quality improvement has been established. Windows/Linux CI validates the automated suite, not every host or interactive session. Installing the package does not publish anything.
 
 ## Name and compatibility
 
