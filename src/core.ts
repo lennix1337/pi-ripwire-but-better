@@ -44,7 +44,14 @@ export async function reapStaleHeadTrees({ bases = cacheBases(), alive = pidAliv
 export async function execute(command, args, { cwd, signal, timeout = 30000, limit = maxLog, stderr = true } = {}) {
   if (signal?.aborted) throw new Error('Cancelled before execution');
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', stderr ? 'pipe' : 'ignore'] });
+    let child;
+    try {
+      child = spawn(command, args, { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', stderr ? 'pipe' : 'ignore'] });
+    } catch (error) {
+      error.notStarted = true;
+      reject(error);
+      return;
+    }
     const chunks = []; let bytes = 0; let reason; let killTimer;
     const stop = why => {
       if (reason) return;
@@ -260,6 +267,12 @@ async function acquireLock(lockPath) {
   throw error;
 }
 
+function checkFailureMessage(error) {
+  if (!error.notStarted) return error.message;
+  const shellHint = process.platform === 'win32' ? ' Windows .cmd/.bat shims require an explicit shell recipe; commands run with shell:false.' : '';
+  return `${error.message}; Nothing started. Check recipe argv[0], cwd and the Pi process PATH (not only the terminal PATH).${shellHint} No retry or shell fallback was attempted.`;
+}
+
 export async function projectChecks({ root, name = '', signal, store = defaultStore(), speculative = false }) {
   root = await repositoryRoot(root);
   const { config, digest, origin } = await loadRecipes(root);
@@ -291,8 +304,9 @@ export async function projectChecks({ root, name = '', signal, store = defaultSt
   } catch (error) {
     if (error.notStarted) executionStarted = false;
     if (receipt) {
-      await save(store, id, output, { ...receipt, status: executionStarted ? 'outcome_uncertain' : 'not_started', elapsedMs: Date.now() - started, error: error.message });
-      throw new Error(`${error.message}; inspect project_evidence id=${id} before retrying`, { cause: error });
+      const message = checkFailureMessage(error);
+      await save(store, id, output, { ...receipt, status: executionStarted ? 'outcome_uncertain' : 'not_started', elapsedMs: Date.now() - started, error: message });
+      throw new Error(`${message}; inspect project_evidence id=${id} before retrying`, { cause: error });
     }
     throw error;
   } finally {

@@ -24,6 +24,14 @@ Evidence outside Git: `C:/projetos/local-validation/performance/pi-ripwire/` (`t
 
 See `PERFORMANCE-AUDIT.md` for the reproduced fingerprint/UTF-8 defects, fixes, frozen-baseline measurements, and static-check limits. Latest follow-up validation: 21/21 tests including real offline Pi and OptChat flow, typecheck and discovery. Bounded evidence reads reduced 4 MiB log pagination from 3.62–3.66 ms to 0.45–0.46 ms (87.4–87.5%) in both benchmark orders, with identical returned content and at most 6,001 log bytes read per default page. Bounded eight-file I/O batches reduced fingerprinting 65.6–66.0% and tiny-check orchestration 57.6–58.4% on the 1,000-file fixture, relative to the already Git-parallel baseline; small-fixture fingerprint results were mixed. See the audit for both run orders. Synthetic check orchestration fell from 315–335 ms to 164–176 ms across both run orders; this is not a whole-agent speed claim. Existing project tests above are historical; a new smoke attempt lacked observable execution output and is not counted as a fresh pass.
 
+## Windows check-launch recovery (2026-10-26)
+
+- Reproduced a synchronous `.cmd` launch rejection (`EINVAL`) being recorded as `outcome_uncertain`, which stranded the repository lock despite no child starting. Asynchronous missing-executable errors were already classified `not_started`.
+- Synchronous spawn rejection now carries the same no-start evidence. Failed launches keep their error flag/receipt, release only the no-start lock, and explain the explicit-shell/Pi-PATH boundary. No retry or shell fallback is added; real timeouts still retain the uncertainty fence.
+- Windows suite: 53 passed, one optional OptChat integration skipped; includes real `.cmd` rejection, explicit `cmd.exe` recovery, no execution before recovery, and fresh Pi native-tool/evidence read-back. Removing the no-start classification caused the two new synchronous-launch regressions to fail; it was restored and the suite passed.
+- Ripwire contracts unchanged and quality gate passed (two informational churn findings). Static test-gate still has unresolved call-graph coverage; passing tests do not prove every statically impacted path.
+- Existing sessions require `/reload` to load the fix. No reload, production action, account/PATH change or package release is performed by this work. Fresh Linux/macOS execution remains unverified.
+
 ## Limits / pending
 
 - Quality-delta cannot compare this new, uncommitted repository: no HEAD or pinned prior baseline. Explicit test-gate exited 4: four recommended files, zero untested symbols; developer smoke has `run_unknown=1`. All four recommended test/smoke files were actually executed.

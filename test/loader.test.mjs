@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { validateToolArguments } from '@earendil-works/pi-ai';
 import { execute } from '../src/core.ts';
+import { fixtureRepo } from './fixture.mjs';
 import { loadExtensions } from '../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js';
 
 test('real Pi loader registers exactly three tools and no prompt-shaping hooks', async () => {
@@ -27,6 +28,36 @@ test('real Pi loader registers exactly three tools and no prompt-shaping hooks',
   const result = await tool.execute('loader-test', { root: root + '/src', action: 'map' }, undefined, undefined, {});
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /single repository root/);
+});
+
+test('native check launch failures stay errors with actionable saved evidence and no stranded lock', async t => {
+  const f = await fixtureRepo(t, {
+    missing: { description: 'Missing executable', argv: ['pi-ripwire-missing-launch-fixture'], timeoutMs: 1000 },
+    smoke: { description: 'Working executable', argv: [process.execPath, '-e', "console.log('still-works')"], timeoutMs: 2000 },
+  });
+  const previousStore = process.env.PI_RIPWIRE_EVIDENCE_DIR;
+  process.env.PI_RIPWIRE_EVIDENCE_DIR = f.store;
+  t.after(() => {
+    if (previousStore === undefined) delete process.env.PI_RIPWIRE_EVIDENCE_DIR;
+    else process.env.PI_RIPWIRE_EVIDENCE_DIR = previousStore;
+  });
+  const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], f.root);
+  assert.deepEqual(loaded.errors, []);
+  const tools = loaded.extensions[0].tools;
+  const failed = await tools.get('project_checks').definition.execute('missing', { root: f.root, name: 'missing' });
+  assert.equal(failed.isError, true);
+  assert.match(failed.details.message, /Nothing started.*argv\[0\].*cwd.*PATH/);
+  assert.match(failed.details.message, /No retry or shell fallback/);
+  const id = /project_evidence id=([a-f0-9-]{36})/.exec(failed.details.message)?.[1];
+  assert.ok(id);
+  const saved = await tools.get('project_evidence').definition.execute('receipt', { id });
+  assert.equal(saved.details.status, 'not_started');
+  assert.match(saved.details.error, /Nothing started/);
+  assert.equal((await readdir(f.store)).filter(file => file.endsWith('.json')).length, 1);
+  const smoke = await tools.get('project_checks').definition.execute('smoke', { root: f.root, name: 'smoke' });
+  assert.equal(smoke.isError, false);
+  assert.equal(smoke.details.status, 'passed');
+  assert.match(smoke.details.output, /still-works/);
 });
 
 test('/reload picks up edits to every source module, not only the entry', async t => {
