@@ -112,14 +112,32 @@ function createServer(root, { binary, spawnProcess, timeoutMs, maxBytes }) {
       return toolResult(result, fail);
     },
     async close() {
+      clearTimeout(this.idleTimer);
       fail(uncertain('closed'));
       await reaped;
     },
   };
 }
 
-/** Session-owned, repository-isolated MCP clients; admission is bounded, never retried. */
-export function createResidentPool({ binary = 'ripwire', spawnProcess = spawn, maxServers = 2, maxPending = 16, timeoutMs = 60000, maxBytes = 4 * 1024 * 1024 } = {}) {
+/** Ends one request; the last one out arms the server's idle exit. */
+function release(server, servers, idleMs) {
+  if (--server.queued > 0) return;
+  clearTimeout(server.idleTimer);
+  server.idleTimer = setTimeout(() => {
+    // Admission increments `queued` synchronously after the map lookup, so this check cannot race it.
+    if (server.queued > 0 || servers.get(server.root) !== server) return;
+    servers.delete(server.root);
+    void server.close();
+  }, idleMs);
+  server.idleTimer.unref?.();
+}
+
+/**
+ * Session-owned, repository-isolated MCP clients; admission is bounded, never retried.
+ * A server with no request for `idleMs` exits: a live server holds its root as cwd, which on
+ * Windows blocks removing that worktree, and keeps a process per root for the whole session.
+ */
+export function createResidentPool({ binary = 'ripwire', spawnProcess = spawn, maxServers = 2, maxPending = 16, timeoutMs = 60000, maxBytes = 4 * 1024 * 1024, idleMs = 5 * 60000 } = {}) {
   const servers = new Map(); let closed = false; let pending = 0; let admission = Promise.resolve();
   const config = { binary, spawnProcess, timeoutMs, maxBytes };
 
@@ -136,6 +154,7 @@ export function createResidentPool({ binary = 'ripwire', spawnProcess = spawn, m
       if (closed) throw new Error('Resident pool closed');
       server = createServer(root, config); servers.set(root, server);
     }
+    clearTimeout(server.idleTimer);
     server.queued++;
     return server;
   }
@@ -156,7 +175,7 @@ export function createResidentPool({ binary = 'ripwire', spawnProcess = spawn, m
       const job = acquired.then(server => {
         const request = server.chain.then(() => server.request(action, query, signal));
         server.chain = request.catch(() => { /* The request caller retains the error. */ });
-        return request.finally(() => { server.queued--; });
+        return request.finally(() => release(server, servers, idleMs));
       }).finally(() => { pending--; });
       return cancellable(job, signal);
     },

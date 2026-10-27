@@ -11,5 +11,6 @@ for await (const line of lines) {
   if (query === 'malformed') { process.stdout.write('not json\n'); continue; }
   if (query === 'null-response') { process.stdout.write('null\n'); continue; }
   if (query === 'oversize') { process.stdout.write('x'.repeat(8192)); continue; }
-  reply({ content: [{ type: 'text', text: JSON.stringify({ root, pid: process.pid, tool: request.params.name, query }) }], _fresh: 'ok', _index: 'fixture', ...(query === 'refuse' ? { isError: true } : {}) });
+  const answer = () => reply({ content: [{ type: 'text', text: JSON.stringify({ root, pid: process.pid, tool: request.params.name, query }) }], _fresh: 'ok', _index: 'fixture', ...(query === 'refuse' ? { isError: true } : {}) });
+  if (query === 'slow') setTimeout(answer, 300); else answer();
 }

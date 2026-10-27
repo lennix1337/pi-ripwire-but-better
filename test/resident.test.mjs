@@ -48,6 +48,31 @@ test('resident MCP reuses one process, retains freshness, isolates roots and pre
   assert.ok(children[0].exitCode !== null || children[0].signalCode !== null, 'idle owner is reaped before eviction replacement');
 });
 
+const reaped = child => child.exitCode !== null || child.signalCode !== null;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('an idle server exits after idleMs, releasing its root; the next request starts a fresh one', async t => {
+  const { pool, children } = await poolFor(t, { idleMs: 100 });
+  const first = payload(await pool.navigate('/root', 'search', 'q'));
+  await sleep(500);
+  assert.ok(reaped(children[0]), 'idle owner keeps no process (or Windows cwd handle) on its root');
+  const second = payload(await pool.navigate('/root', 'search', 'q'));
+  assert.notEqual(second.pid, first.pid);
+  assert.equal(children.length, 2);
+});
+
+test('the idle timer never interrupts a dispatched or queued request', async t => {
+  const { pool, children } = await poolFor(t, { idleMs: 100 });
+  await pool.navigate('/root', 'search', 'arms the idle timer');
+  await sleep(50);
+  const slow = pool.navigate('/root', 'search', 'slow');
+  const queued = pool.navigate('/root', 'task', 'after slow');
+  assert.equal(payload(await slow).query, 'slow');
+  assert.equal(payload(await queued).query, 'after slow');
+  assert.equal(children.length, 1);
+  assert.ok(!reaped(children[0]), 'request activity restarts the idle window');
+});
+
 test('timeout is not retried and terminates the uncertain server', async t => {
   const { pool, children } = await poolFor(t, { timeoutMs: 250 });
   await assert.rejects(pool.navigate('/root', 'search', 'hang'), /timeout.*not replayed/i);
