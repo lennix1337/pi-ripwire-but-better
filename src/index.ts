@@ -4,6 +4,7 @@ import { Type } from 'typebox';
 import { actions, navigate, navigateResident, residentActions, projectChecks, evidence, reapStaleHeadTrees, repositoryRoot } from './core.ts';
 import { createAutocheck } from './autocheck.ts';
 import { createResidentPool } from './resident.ts';
+import { navigationPreview } from './navigation-preview.ts';
 
 const textResult = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: value });
 const failure = (error: unknown) => ({ ...textResult({ status: 'error', message: error instanceof Error ? error.message : String(error), next: 'Correct the input or inspect evidence. Do not blindly retry uncertain checks.' }), isError: true });
@@ -15,10 +16,10 @@ const incomplete = ['timeout', 'cancelled', 'output_limit', 'transport_error'];
 async function runNavigation(params: { root: string; action: string; query?: string }, signal: AbortSignal | undefined, resident: ResidentPool | undefined) {
   if (resident === undefined || !residentActions.has(params.action)) {
     const result = await navigate({ ...params, query: params.query, signal });
-    return { ...textResult(result), isError: incomplete.includes(result.status) };
+    return { content: textResult(navigationPreview(result)).content, details: result, isError: incomplete.includes(result.status) };
   }
   const result = await navigateResident({ ...params, query: params.query, signal, resident });
-  return { ...textResult(result), isError: incomplete.includes(result.status) || result.exitCode !== 0 };
+  return { content: textResult(navigationPreview(result)).content, details: result, isError: incomplete.includes(result.status) || result.exitCode !== 0 };
 }
 
 const residentFromEnv = (env = process.env) => env.PI_RIPWIRE_RESIDENT === '1' ? createResidentPool({ binary: env.PI_RIPWIRE_BINARY || 'ripwire' }) : undefined;
