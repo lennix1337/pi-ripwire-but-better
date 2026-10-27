@@ -112,8 +112,16 @@ test('incomplete navigation returns a native error and preserves inspectable rec
 });
 
 test('native CLI search compacts only the known legend and retains raw receipt', async t => {
-  const root = fileURLToPath(new URL('../', import.meta.url));
-  const store = await mkdtemp(path.join(os.tmpdir(), 'rw-compact-'));
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'rw-compact-'));
+  const root = path.join(dir, 'repo'), bin = path.join(dir, 'bin'), store = path.join(dir, 'store');
+  await mkdir(root); await mkdir(bin);
+  const output = await readFile(new URL('./fixtures/grep-v1.xml', import.meta.url), 'utf8');
+  // A hermetic CLI stand-in: Node executes this directory and emits captured Ripwire output.
+  await writeFile(path.join(root, 'index.js'), `process.stdout.write(${JSON.stringify(output)});`);
+  assert.equal((await execute('git', ['init'], { cwd: root })).code, 0);
+  await copyFile(process.execPath, path.join(bin, process.platform === 'win32' ? 'ripwire.exe' : 'ripwire'));
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${previousPath}`;
   const previous = process.env.PI_RIPWIRE_EVIDENCE_DIR;
   const previousResident = process.env.PI_RIPWIRE_RESIDENT;
   process.env.PI_RIPWIRE_EVIDENCE_DIR = store;
@@ -121,7 +129,8 @@ test('native CLI search compacts only the known legend and retains raw receipt',
   t.after(async () => {
     if (previous === undefined) delete process.env.PI_RIPWIRE_EVIDENCE_DIR; else process.env.PI_RIPWIRE_EVIDENCE_DIR = previous;
     if (previousResident === undefined) delete process.env.PI_RIPWIRE_RESIDENT; else process.env.PI_RIPWIRE_RESIDENT = previousResident;
-    await rm(store, { recursive: true, force: true });
+    process.env.PATH = previousPath;
+    await rm(dir, { recursive: true, force: true });
   });
   const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], root);
   assert.deepEqual(loaded.errors, []);
@@ -132,6 +141,7 @@ test('native CLI search compacts only the known legend and retains raw receipt',
   assert.match(result.details.output, /^<!-- ripwire grep schema=/);
   const text = JSON.parse(result.content[0].text);
   assert.match(text.output, /^<grep /);
+  assert.equal(text.output, output.slice(output.indexOf('-->') + 3));
   assert.match(text.recovery, new RegExp(result.details.id));
   const saved = await tools.get('project_evidence').definition.execute('raw', { id: result.details.id });
   assert.equal(saved.details.output, result.details.output);
