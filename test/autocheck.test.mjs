@@ -21,7 +21,7 @@ function recorder(store) {
 const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(predicate, ms = 15000) {
   const end = Date.now() + ms;
-  while (!predicate()) { if (Date.now() > end) throw new Error('timed out waiting'); await settle(25); }
+  while (!(await predicate())) { if (Date.now() > end) throw new Error('timed out waiting'); await settle(25); }
 }
 
 test('a burst of edits runs each onEdit recipe once and the explicit call reuses it', async t => {
@@ -30,7 +30,7 @@ test('a burst of edits runs each onEdit recipe once and the explicit call reuses
   const auto = createAutocheck({ run, debounceMs: 50 }); t.after(() => auto.dispose());
   for (const text of ['two', 'three', 'four']) { await writeFile(path.join(f.root, 'src/a.ts'), text); await auto.edited(path.join(f.root, 'src/a.ts')); }
   let notes = [];
-  await until(() => (notes = notes.concat(auto.drainNotes())).length > 0);
+  await until(async () => (notes = notes.concat((await auto.drainNotes()))).length > 0);
   assert.deepEqual(runs, ['quick']);
   assert.match(notes[0], /\[autocheck\] repo quick passed/);
   const reused = await auto.claim(f.root, 'quick');
@@ -49,7 +49,7 @@ test('concurrent edits from one tool batch still run the onEdit recipes once', a
   await writeFile(file, 'two');
   await Promise.all([auto.edited(file), auto.edited(file)]);
   let notes = [];
-  await until(() => (notes = notes.concat(auto.drainNotes())).length > 0);
+  await until(async () => (notes = notes.concat((await auto.drainNotes()))).length > 0);
   assert.deepEqual(runs, ['quick']);
   assert.ok((await auto.claim(f.root, 'quick')).reused);
 });
@@ -59,7 +59,7 @@ test('a run whose sources change without a new edit is reported, not dropped', a
   const auto = createAutocheck({ run: recorder(f.store).run, debounceMs: 20 }); t.after(() => auto.dispose());
   await auto.edited(path.join(f.root, 'src/a.ts'));
   let notes = [];
-  await until(() => (notes = notes.concat(auto.drainNotes())).length > 0);
+  await until(async () => (notes = notes.concat((await auto.drainNotes()))).length > 0);
   assert.match(notes[0], /\[autocheck\] repo quick ended source_changed \(receipt [\w-]+\); nothing to reuse/);
 });
 
@@ -67,9 +67,41 @@ test('a result is not reused once the sources change', async t => {
   const f = await repo(t, { quick: node("console.log('ok')", { onEdit: true }) });
   const auto = createAutocheck({ run: recorder(f.store).run, debounceMs: 20 }); t.after(() => auto.dispose());
   await auto.edited(path.join(f.root, 'src/a.ts'));
-  await until(() => auto.drainNotes().length > 0);
+  await until(async () => (await auto.drainNotes()).length > 0);
   await writeFile(path.join(f.root, 'src/b.ts'), 'untracked change after the run');
   assert.equal(await auto.claim(f.root, 'quick'), null);
+});
+
+// Seen live 2026-10-30: a typecheck note said "passed on the current sources" for code tsc rejected, because the run
+// had finished on the sources before the change that was being reported on.
+test('a note from a run whose sources changed afterwards does not claim the current sources', async t => {
+  const f = await repo(t, { quick: node("console.log('ok')", { onEdit: true }) });
+  let done = false;
+  const run = args => projectChecks({ ...args, store: f.store }).finally(() => { done = true; });
+  const auto = createAutocheck({ run, debounceMs: 20 }); t.after(() => auto.dispose());
+  await auto.edited(path.join(f.root, 'src/a.ts'));
+  await until(() => done);
+  await settle(50);
+  await writeFile(path.join(f.root, 'src/a.ts'), 'changed by a shell command after the run');
+  const notes = await auto.drainNotes();
+  assert.equal(notes.length, 1);
+  assert.doesNotMatch(notes[0], /current sources/);
+  assert.match(notes[0], /\[autocheck\] repo quick passed .*sources that have changed since/);
+});
+
+test('a run that finishes after a newer edit superseded it leaves no note of its own', async t => {
+  const f = await repo(t, { quick: node("console.log('ok')", { onEdit: true }) });
+  let finished = 0;
+  // A process that completes despite the abort: the run ignores the signal and resolves late.
+  const run = ({ signal, ...args }) => settle(300).then(() => projectChecks({ ...args, store: f.store })).finally(() => { finished += 1; });
+  const auto = createAutocheck({ run, debounceMs: 20 }); t.after(() => auto.dispose());
+  const file = path.join(f.root, 'src/a.ts');
+  await auto.edited(file);
+  await settle(100);
+  await auto.edited(file);
+  await until(() => finished === 2);
+  await settle(50);
+  assert.equal((await auto.drainNotes()).length, 1, 'only the run on the latest edit reports');
 });
 
 test('failures are reported in the next note with their output', async t => {
@@ -77,9 +109,9 @@ test('failures are reported in the next note with their output', async t => {
   const auto = createAutocheck({ run: recorder(f.store).run, debounceMs: 20 }); t.after(() => auto.dispose());
   await auto.edited(path.join(f.root, 'src/a.ts'));
   let notes = [];
-  await until(() => (notes = auto.drainNotes()).length > 0);
+  await until(async () => (notes = (await auto.drainNotes())).length > 0);
   assert.match(notes[0], /types FAILED \(exit 2/); assert.match(notes[0], /TS2304/);
-  assert.deepEqual(auto.drainNotes(), [], 'a note is delivered once');
+  assert.deepEqual((await auto.drainNotes()), [], 'a note is delivered once');
 });
 
 test('an edit during a run cancels it, and the rerun starts after the lock is free', async t => {
@@ -87,10 +119,10 @@ test('an edit during a run cancels it, and the rerun starts after the lock is fr
   const { runs, run } = recorder(f.store);
   const auto = createAutocheck({ run, debounceMs: 20 }); t.after(() => auto.dispose());
   await auto.edited(path.join(f.root, 'src/a.ts'));
-  await until(() => runs.length === 1); await settle(300);
+  await until(async () => runs.length === 1); await settle(300);
   await writeFile(path.join(f.root, 'src/a.ts'), 'edited mid-run'); await auto.edited(path.join(f.root, 'src/a.ts'));
   let notes = [];
-  await until(() => (notes = notes.concat(auto.drainNotes())).length > 0);
+  await until(async () => (notes = notes.concat((await auto.drainNotes()))).length > 0);
   assert.equal(runs.length, 2); assert.equal(notes.length, 1); assert.match(notes[0], /slow passed/);
   assert.deepEqual((await readdir(f.store)).filter(x => x.endsWith('.active')), [], 'the cancelled speculative run left no uncertainty marker');
 });
@@ -100,7 +132,7 @@ test('an explicit request for another check stops the speculative run and gets t
   const { runs, run } = recorder(f.store);
   const auto = createAutocheck({ run, debounceMs: 20 }); t.after(() => auto.dispose());
   await auto.edited(path.join(f.root, 'src/a.ts'));
-  await until(() => runs.length === 1); await settle(300);
+  await until(async () => runs.length === 1); await settle(300);
   assert.equal(await auto.claim(f.root, 'other'), null);
   const explicit = await projectChecks({ root: f.root, name: 'other', store: f.store });
   assert.equal(explicit.status, 'passed');
@@ -111,7 +143,7 @@ test('reusing a finished result leaves the next speculative check running; fresh
   const { runs, run } = recorder(f.store);
   const auto = createAutocheck({ run, debounceMs: 20 }); t.after(() => auto.dispose());
   await auto.edited(path.join(f.root, 'src/a.ts'));
-  await until(() => runs.length === 2);
+  await until(async () => runs.length === 2);
   assert.equal((await auto.claim(f.root, 'quick')).status, 'passed');
   assert.equal((await auto.claim(f.root, 'slow')).status, 'passed', 'the slow run was awaited, not cancelled');
   assert.deepEqual(runs, ['quick', 'slow']);
@@ -127,7 +159,7 @@ test('watch prefixes limit which edits trigger a recipe; files outside a reposit
   await settle(200);
   assert.deepEqual(runs, []);
   await mkdir(path.join(f.root, 'docs')); await auto.edited(path.join(f.root, 'docs/x.md'));
-  await until(() => runs.length === 1);
+  await until(async () => runs.length === 1);
 });
 
 test('a repository without recipes runs nothing and tells the agent once', async t => {
@@ -139,11 +171,11 @@ test('a repository without recipes runs nothing and tells the agent once', async
   await auto.edited(path.join(f.root, 'src/a.ts'));
   await settle(100);
   assert.deepEqual(runs, []);
-  const notes = auto.drainNotes();
+  const notes = (await auto.drainNotes());
   assert.equal(notes.length, 1);
   assert.match(notes[0], /\[autocheck\] repo has no \.pi\/checks\.json/);
   await auto.edited(path.join(f.root, 'src/a.ts'));
-  assert.deepEqual(auto.drainNotes(), []);
+  assert.deepEqual((await auto.drainNotes()), []);
 });
 
 test('a malformed recipe file still reaches the user', async t => {

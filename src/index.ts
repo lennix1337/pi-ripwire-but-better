@@ -31,13 +31,14 @@ export default function extension(pi: ExtensionAPI) {
     void reapStaleHeadTrees().catch(error => ctx.ui.notify(`pi-ripwire: stale Ripwire HEAD checkouts not removed: ${error.message}`, 'warning'));
   });
   pi.on('session_shutdown', async () => { autocheck.dispose(); await resident?.dispose(); });
-  pi.on('tool_result', (event, ctx) => {
+  pi.on('tool_result', async (event, ctx) => {
     if ((event.toolName === 'edit' || event.toolName === 'write') && !event.isError && typeof event.input.path === 'string') {
       const file = path.resolve(ctx.cwd, event.input.path);
-      void autocheck.edited(file).catch(error => ctx.ui.notify(`pi-ripwire autocheck: ${error.message}`, 'warning'));
+      // Awaited before the drain below: the edit drops the notes of runs on the sources it just replaced.
+      await autocheck.edited(file).catch(error => ctx.ui.notify(`pi-ripwire autocheck: ${error.message}`, 'warning'));
     }
     if (event.parentToolCallId) return;
-    const notes = autocheck.drainNotes();
+    const notes = await autocheck.drainNotes();
     if (!notes.length) return;
     return { content: [...event.content, { type: 'text' as const, text: notes.join('\n') }], structuredContent: event.structuredContent };
   });
