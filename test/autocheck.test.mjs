@@ -138,6 +138,32 @@ test('an explicit request for another check stops the speculative run and gets t
   assert.equal(explicit.status, 'passed');
 });
 
+// A sweep that was waiting for the cancelled run of the previous edit used to reset its own state once that run
+// exited, which undid the cancellation of the explicit request that arrived meanwhile and started a speculative run
+// the explicit check had been promised the lock against.
+test('a sweep waiting for a cancelled run does not start once an explicit check has claimed the repository', async t => {
+  const root = path.resolve('/virtual/repo');
+  const calls = []; let exitCancelledRun;
+  const run = args => {
+    calls.push(args.name);
+    if (calls.length === 1) return new Promise(resolve => { exitCancelledRun = () => resolve({ status: 'cancelled', id: 'first' }); });
+    return Promise.resolve({ status: 'passed', id: `run-${calls.length}`, unchanged: true, after: { digest: 'd' }, recipeDigest: 'r', elapsedMs: 1, root, name: args.name, output: '' });
+  };
+  const recipes = { config: { checks: { unit: { onEdit: true }, other: {} } }, digest: 'r' };
+  const auto = createAutocheck({ run, rootOf: async () => root, recipesOf: async () => recipes, fingerprintOf: async () => ({ digest: 'd' }), debounceMs: 10 });
+  t.after(() => auto.dispose());
+  const file = path.join(root, 'src/a.ts');
+  await auto.edited(file);
+  await until(() => calls.length === 1);
+  await auto.edited(file); // cancels the first run; the second sweep now waits for it to exit
+  await settle(60);
+  const claimed = auto.claim(root, 'other');
+  exitCancelledRun();
+  assert.equal(await claimed, null);
+  await settle(60);
+  assert.deepEqual(calls, ['unit'], 'no speculative run starts after the explicit check claimed the repository');
+});
+
 test('reusing a finished result leaves the next speculative check running; fresh asks for the lock', async t => {
   const f = await repo(t, { quick: node("console.log('quick')", { onEdit: true }), slow: node("setTimeout(()=>console.log('slow-ok'),1200)", { onEdit: true }) });
   const { runs, run } = recorder(f.store);
