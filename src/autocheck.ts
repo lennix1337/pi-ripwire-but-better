@@ -55,9 +55,12 @@ export function createAutocheck({ run = projectChecks, fingerprintOf = fingerpri
 
   async function sweep(root, names) {
     const s = state(root);
+    // This sweep owns the controller from the start: an edit or an explicit claim that arrives while it waits below
+    // must be able to cancel it, and `halt` is cleared before the wait so that a claim during it is not undone.
+    s.controller?.abort();
+    const controller = new AbortController(); s.controller = controller; s.halt = false;
     // A run cancelled by the previous edit still holds the lock until its process exits.
     if (s.running) await s.running.catch(() => { /* Its own sweep already handled the outcome. */ });
-    const controller = new AbortController(); s.controller = controller; s.halt = false;
     for (const name of names) {
       if (controller.signal.aborted || s.halt || !(await runOne(root, s, name, controller.signal))) break;
     }
