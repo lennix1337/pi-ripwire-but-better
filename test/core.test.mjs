@@ -224,3 +224,14 @@ test('recipe working directories are checked concurrently; an escaping one is st
   await mkdir(path.join(path.dirname(escaping.root), 'outside'));
   await assert.rejects(loadRecipes(escaping.root), /Path escapes project/);
 });
+
+test('a fingerprint canonicalises the repository root once, not once per untracked file', async t => {
+  const { root } = await fixtureRepo(t, {});
+  // Created after the commit, so they are untracked and each one goes through contained().
+  for (let i = 0; i < 20; i++) await writeFile(path.join(root, `untracked${i}.txt`), 'x');
+  const rootCalls = [];
+  const canonicalize = target => { if (target === root) rootCalls.push(target); return realpath(target); };
+  const fingerprinted = await fingerprint(root, { canonicalize });
+  assert.equal(fingerprinted.digest, (await fingerprint(root)).digest);
+  assert.ok(rootCalls.length <= 1, `root canonicalised ${rootCalls.length} times for 20 untracked files`);
+});

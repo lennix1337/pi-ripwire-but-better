@@ -103,7 +103,7 @@ export function ripwireArgs(root, action, query = '') {
   return args;
 }
 
-export async function fingerprint(root) {
+export async function fingerprint(root, { canonicalize = realpath } = {}) {
   const git = async args => {
     // Warnings such as core.autocrlf's go to stderr and disappear once Git refreshes the index; they are not source.
     const result = await execute('git', ['-C', root, ...args], { stderr: false });
@@ -122,10 +122,13 @@ export async function fingerprint(root) {
   const head = revision.code === 0 ? revision.output.trim() : 'unborn';
   const files = untracked.split('\0').filter(Boolean).sort();
   const state = createHash('sha256').update(JSON.stringify([head, diff, staged])); let bytes = 0;
+  // Every untracked file is checked against the same root: canonicalise it once, not once per file.
+  const canonicalRoot = await canonicalize(root);
+  const containedRoot = target => target === root ? canonicalRoot : canonicalize(target);
   // Bound I/O concurrency and retain sorted hashing order and the input budget.
   for (let offset = 0; offset < files.length; offset += 8) {
     const batch = await Promise.all(files.slice(offset, offset + 8).map(async file => {
-      const target = await contained(root, file);
+      const target = await contained(root, file, { canonicalize: containedRoot });
       return { file, target, info: await stat(target) };
     }));
     for (const { info } of batch) {
