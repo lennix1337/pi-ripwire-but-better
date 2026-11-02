@@ -103,7 +103,7 @@ export function ripwireArgs(root, action, query = '') {
   return args;
 }
 
-export async function fingerprint(root) {
+export async function fingerprint(root, { canonicalize = realpath } = {}) {
   const git = async args => {
     // Warnings such as core.autocrlf's go to stderr and disappear once Git refreshes the index; they are not source.
     const result = await execute('git', ['-C', root, ...args], { stderr: false });
@@ -122,10 +122,13 @@ export async function fingerprint(root) {
   const head = revision.code === 0 ? revision.output.trim() : 'unborn';
   const files = untracked.split('\0').filter(Boolean).sort();
   const state = createHash('sha256').update(JSON.stringify([head, diff, staged])); let bytes = 0;
+  // Every untracked file is checked against the same root: canonicalise it once, not once per file.
+  const canonicalRoot = await canonicalize(root);
+  const containedRoot = target => target === root ? canonicalRoot : canonicalize(target);
   // Bound I/O concurrency and retain sorted hashing order and the input budget.
   for (let offset = 0; offset < files.length; offset += 8) {
     const batch = await Promise.all(files.slice(offset, offset + 8).map(async file => {
-      const target = await contained(root, file);
+      const target = await contained(root, file, { canonicalize: containedRoot });
       return { file, target, info: await stat(target) };
     }));
     for (const { info } of batch) {
@@ -141,11 +144,12 @@ export async function fingerprint(root) {
   return { head, digest: state.digest('hex'), scope: 'HEAD + staged/unstaged diffs + nonignored untracked contents; ignored build/dependency inputs not covered' };
 }
 
-export async function contained(root, relative) {
-  const candidate = await realpath(path.resolve(root, relative));
+export async function contained(root, relative, { canonicalize = realpath } = {}) {
+  // Independent canonicalisations, requested together: one filesystem round trip instead of two in sequence.
+  const [candidate, canonicalRoot] = await Promise.all([canonicalize(path.resolve(root, relative)), canonicalize(root)]);
   // Compare canonical to canonical: a root reached through a link or an 8.3 short name
   // would otherwise make every file inside it look like an escape.
-  const rel = path.relative(await realpath(root), candidate);
+  const rel = path.relative(canonicalRoot, candidate);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error('Path escapes project');
   return candidate;
 }
@@ -225,17 +229,24 @@ function validateEditTrigger(name, { onEdit, watch }) {
   if (watch !== undefined && (!Array.isArray(watch) || watch.length > 20 || !watch.every(relativePrefix))) throw new Error(`watch must list up to 20 relative path prefixes: ${name}`);
 }
 
-export async function loadRecipes(root) {
+function validateRecipe(name, recipe) {
+    if (!/^[a-z][a-z0-9_-]{0,50}$/.test(name) || !Array.isArray(recipe.argv) || !recipe.argv.length || recipe.argv.some(x => typeof x !== 'string' || !x || x.includes('\0')) || recipe.argv.length > 100) throw new Error(`Invalid recipe: ${name}`);
+    if (!Number.isInteger(recipe.timeoutMs) || recipe.timeoutMs < 100 || recipe.timeoutMs > 600000) throw new Error(`Invalid timeout: ${name}`);
+    if (typeof recipe.description !== 'string' || recipe.description.length > 300) throw new Error(`Missing bounded description: ${name}`);
+  validateEditTrigger(name, recipe);
+}
+
+export async function loadRecipes(root, { canonicalize = realpath } = {}) {
   let raw; let origin = '.pi/checks.json';
   try {
-    const filename = await contained(root, origin);
+    const filename = await contained(root, origin, { canonicalize });
     if ((await stat(filename)).size > 65536) throw new Error('Recipe file too large');
     raw = await readFile(filename, 'utf8');
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     for (const profile of profiles) {
       const present = await Promise.all(profile.sentinels.map(async file => {
-        try { return (await stat(await contained(root, file))).isFile(); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+        try { return (await stat(await contained(root, file, { canonicalize }))).isFile(); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
       }));
       if (present.every(Boolean)) { raw = JSON.stringify({ version: 1, checks: profile.checks }); origin = `built-in:${profile.name}`; break; }
     }
@@ -243,13 +254,12 @@ export async function loadRecipes(root) {
   }
   const config = JSON.parse(raw);
   if (config.version !== 1 || !config.checks || typeof config.checks !== 'object' || Array.isArray(config.checks)) throw new Error('Expected recipe version 1 and checks object');
-  for (const [name, recipe] of Object.entries(config.checks)) {
-    if (!/^[a-z][a-z0-9_-]{0,50}$/.test(name) || !Array.isArray(recipe.argv) || !recipe.argv.length || recipe.argv.some(x => typeof x !== 'string' || !x || x.includes('\0')) || recipe.argv.length > 100) throw new Error(`Invalid recipe: ${name}`);
-    if (!Number.isInteger(recipe.timeoutMs) || recipe.timeoutMs < 100 || recipe.timeoutMs > 600000) throw new Error(`Invalid timeout: ${name}`);
-    if (typeof recipe.description !== 'string' || recipe.description.length > 300) throw new Error(`Missing bounded description: ${name}`);
-    validateEditTrigger(name, recipe);
-    await contained(root, recipe.cwd || '.');
-  }
+  const entries = Object.entries(config.checks);
+  for (const [name, recipe] of entries) validateRecipe(name, recipe);
+  // Working directories are independent of one another: check them together, then report the first failure in recipe order.
+  const checked = await Promise.allSettled(entries.map(([, recipe]) => contained(root, recipe.cwd || '.', { canonicalize })));
+  const failed = checked.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
   return { config, digest: hash(raw), origin };
 }
 
@@ -274,7 +284,11 @@ function checkFailureMessage(error) {
 }
 
 export async function projectChecks({ root, name = '', signal, store = defaultStore(), speculative = false }) {
-  root = await repositoryRoot(root);
+  return projectChecksAt(await repositoryRoot(root), { name, signal, store, speculative });
+}
+
+// `root` must be a canonical repository root from repositoryRoot(); a caller that has resolved it does not start a second Git subprocess.
+export async function projectChecksAt(root, { name = '', signal, store = defaultStore(), speculative = false }) {
   const { config, digest, origin } = await loadRecipes(root);
   if (!name) return { schema: 'pi-ripwire/v1', root, origin, checks: Object.entries(config.checks).map(([name, recipe]) => ({ name, ...recipe })), policy: 'Explicit execution only. Review repository recipes before running; commands are trusted project code, not a sandbox. No automatic retries or evidence reuse.' };
   if (!Object.hasOwn(config.checks, name)) throw new Error('Unknown named check; list checks first');

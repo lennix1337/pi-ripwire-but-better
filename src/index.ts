@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { actions, navigate, navigateResident, residentActions, projectChecks, evidence, reapStaleHeadTrees, repositoryRoot } from './core.ts';
+import { actions, navigate, navigateResident, residentActions, projectChecksAt, evidence, reapStaleHeadTrees, repositoryRoot } from './core.ts';
 import { createAutocheck } from './autocheck.ts';
 import { createResidentPool } from './resident.ts';
 import { navigationPreview } from './navigation-preview.ts';
@@ -64,12 +64,12 @@ export default function extension(pi: ExtensionAPI) {
     }, { additionalProperties: false }),
     async execute(_id, params, signal) {
       try {
+        const root = await repositoryRoot(params.root);
         if (params.name) {
-          const root = await repositoryRoot(params.root);
           const reused = await autocheck.claim(root, params.name, { fresh: params.fresh });
           if (reused) return { ...textResult(reused), isError: reused.status !== 'passed' };
         }
-        const result = await projectChecks({ root: params.root, name: params.name, signal });
+        const result = await projectChecksAt(root, { name: params.name, signal });
         return { ...textResult(result), isError: 'status' in result && result.status !== 'passed' };
       } catch (error) { return failure(error); }
     },

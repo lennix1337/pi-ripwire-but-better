@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { execute, repositoryRoot, ripwireArgs, fingerprint, projectChecks, evidence, navigate } from '../src/core.ts';
+import { execute, repositoryRoot, ripwireArgs, fingerprint, projectChecks, evidence, navigate, contained, loadRecipes } from '../src/core.ts';
 import { fixtureRepo } from './fixture.mjs';
 
 const fixture = (t, checks = { smoke: { description: 'Print a fixture result', argv: [process.execPath, '-e', "console.log('fixture-ok')"], timeoutMs: 2000 } }) => fixtureRepo(t, checks);
@@ -184,4 +184,54 @@ test('recipes cannot escape root and malformed commands are rejected', async t =
   await assert.rejects(projectChecks(f), /escapes/);
   await writeFile(path.join(f.root, '.pi/checks.json'), JSON.stringify({ version: 1, checks: { bad: { description: 'Bad argv', argv: ['node', 123], timeoutMs: 100 } } }));
   await assert.rejects(projectChecks(f), /Invalid recipe/);
+});
+
+// Concurrency is observed through the injected canonicaliser: a sequential implementation never starts the second
+// realpath while the first is pending, so the first call's wait runs out (300 ms) and the assertion fails.
+test('canonical path and canonical root are resolved together, not one after the other', async t => {
+  const f = await fixture(t, {}, { 'source.txt': 'x' });
+  const calls = []; let release; const second = new Promise(resolve => { release = resolve; });
+  let secondStartedWhileFirstPending;
+  const canonicalize = async target => {
+    calls.push(target);
+    if (calls.length === 1) {
+      await Promise.race([second, new Promise(resolve => setTimeout(resolve, 300))]);
+      secondStartedWhileFirstPending = calls.length === 2;
+    } else release();
+    return realpath(target);
+  };
+  const resolved = await contained(f.root, 'source.txt', { canonicalize });
+  assert.equal(resolved, path.join(f.root, 'source.txt'));
+  assert.equal(secondStartedWhileFirstPending, true);
+  await writeFile(path.join(path.dirname(f.root), 'outside.txt'), 'outside');
+  await assert.rejects(contained(f.root, '../outside.txt', { canonicalize }), /Path escapes project/);
+});
+
+test('recipe working directories are checked concurrently; an escaping one is still refused', async t => {
+  const checks = Object.fromEntries(['a', 'b', 'c', 'd', 'e'].map(name => [name, { description: 'd', argv: ['node'], timeoutMs: 1000, cwd: name }]));
+  const f = await fixtureRepo(t, checks, { 'a/x': '', 'b/x': '', 'c/x': '', 'd/x': '', 'e/x': '' });
+  let inFlight = 0; let maxInFlight = 0;
+  const canonicalize = async target => {
+    inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise(resolve => setImmediate(resolve));
+    inFlight--;
+    return realpath(target);
+  };
+  const recipes = await loadRecipes(f.root, { canonicalize });
+  assert.equal(Object.keys(recipes.config.checks).length, 5);
+  assert.ok(maxInFlight >= 5, `recipe directories checked one at a time (max in flight ${maxInFlight})`);
+  const escaping = await fixture(t, { ok: { description: 'd', argv: ['node'], timeoutMs: 1000, cwd: '.' }, bad: { description: 'd', argv: ['node'], timeoutMs: 1000, cwd: '../outside' } });
+  await mkdir(path.join(path.dirname(escaping.root), 'outside'));
+  await assert.rejects(loadRecipes(escaping.root), /Path escapes project/);
+});
+
+test('a fingerprint canonicalises the repository root once, not once per untracked file', async t => {
+  const { root } = await fixtureRepo(t, {});
+  // Created after the commit, so they are untracked and each one goes through contained().
+  for (let i = 0; i < 20; i++) await writeFile(path.join(root, `untracked${i}.txt`), 'x');
+  const rootCalls = [];
+  const canonicalize = target => { if (target === root) rootCalls.push(target); return realpath(target); };
+  const fingerprinted = await fingerprint(root, { canonicalize });
+  assert.equal(fingerprinted.digest, (await fingerprint(root)).digest);
+  assert.ok(rootCalls.length <= 1, `root canonicalised ${rootCalls.length} times for 20 untracked files`);
 });
