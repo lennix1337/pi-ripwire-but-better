@@ -8,6 +8,9 @@ import { validateToolArguments } from '@earendil-works/pi-ai';
 import { execute } from '../src/core.ts';
 import { fixtureRepo } from './fixture.mjs';
 import { loadExtensions } from '../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js';
+import cp from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { mock } from 'node:test';
 
 test('real Pi loader registers exactly three tools and no prompt-shaping hooks', async () => {
   const root = fileURLToPath(new URL('../', import.meta.url));
@@ -145,4 +148,18 @@ test('native CLI search compacts only the known legend and retains raw receipt',
   assert.match(text.recovery, new RegExp(result.details.id));
   const saved = await tools.get('project_evidence').definition.execute('raw', { id: result.details.id });
   assert.equal(saved.details.output, result.details.output);
+});
+
+// A named check already resolves its repository root in the tool; the check itself must not run `git rev-parse` again.
+test('a named project_checks call resolves the repository root with one Git subprocess', async t => {
+  const f = await fixtureRepo(t, { smoke: { description: 'Print a fixture result', argv: [process.execPath, '-e', "console.log('fixture-ok')"], timeoutMs: 3000 } });
+  const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], fileURLToPath(new URL('../', import.meta.url)));
+  const tool = loaded.extensions[0].tools.get('project_checks').definition;
+  const spawned = []; const original = cp.spawn;
+  mock.method(cp, 'spawn', (command, args, options) => { spawned.push(args); return original(command, args, options); });
+  syncBuiltinESMExports();
+  t.after(() => { mock.restoreAll(); syncBuiltinESMExports(); });
+  const result = await tool.execute('single-root', { root: f.root, name: 'smoke' }, undefined, undefined, {});
+  assert.equal(JSON.parse(result.content[0].text).status, 'passed');
+  assert.equal(spawned.filter(args => args.includes('--show-toplevel')).length, 1);
 });

@@ -281,7 +281,11 @@ function checkFailureMessage(error) {
 }
 
 export async function projectChecks({ root, name = '', signal, store = defaultStore(), speculative = false }) {
-  root = await repositoryRoot(root);
+  return projectChecksAt(await repositoryRoot(root), { name, signal, store, speculative });
+}
+
+// `root` must be a canonical repository root from repositoryRoot(); a caller that has resolved it does not start a second Git subprocess.
+export async function projectChecksAt(root, { name = '', signal, store = defaultStore(), speculative = false }) {
   const { config, digest, origin } = await loadRecipes(root);
   if (!name) return { schema: 'pi-ripwire/v1', root, origin, checks: Object.entries(config.checks).map(([name, recipe]) => ({ name, ...recipe })), policy: 'Explicit execution only. Review repository recipes before running; commands are trusted project code, not a sandbox. No automatic retries or evidence reuse.' };
   if (!Object.hasOwn(config.checks, name)) throw new Error('Unknown named check; list checks first');
