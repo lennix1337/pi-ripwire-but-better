@@ -272,9 +272,32 @@ async function acquireLock(lockPath) {
     await unlink(lockPath);
     return open(lockPath, 'wx', 0o600);
   }
-  const error = new Error(marker.speculative ? `An automatic onEdit check (${marker.name}) is running for this repository; call again when it ends.` : 'Prior check active or outcome uncertain. Inspect the marker and processes; never blindly replay.');
+  const error = new Error(marker.speculative ? `An automatic onEdit check (${marker.name}) is running for this repository; call again when it ends.` : heldMessage(marker, lockPath));
   error.code = 'CHECK_ACTIVE';
   throw error;
+}
+
+// Explicit runs of this process are queued (see queued), so a marker of this process, or of a process that is gone,
+// was left by a run that ended without a recorded outcome; a live foreign pid is another Pi session or subagent.
+function heldMessage(marker, lockPath) {
+  const check = `Check "${marker.name ?? 'unknown'}"${marker.id ? ` (run ${marker.id})` : ''}`;
+  const since = Number.isFinite(marker.started) ? ` since ${new Date(marker.started).toISOString()}` : '';
+  if (Number.isInteger(marker.pid) && marker.pid !== process.pid && pidAlive(marker.pid)) {
+    return `${check} is running in process ${marker.pid}${since}, another Pi session or subagent; call again when it ends. Nothing was started.`;
+  }
+  const evidence = marker.id ? `read project_evidence id=${marker.id}` : 'no receipt was recorded';
+  return `${check} ended with its outcome uncertain${since}: ${evidence}. Its marker ${lockPath} blocks this repository until it is removed; remove it once you know what that run did, then call again. Nothing was started; never blindly replay.`;
+}
+
+// Pi runs a reply's tool calls together: over 14 days, 25 of 35 "check active" refusals were a second check of the same
+// reply (typecheck + unit). Explicit checks of one repository from this process therefore run one after another.
+const explicitRuns = new Map();
+function queued(lockPath, run) {
+  const current = (explicitRuns.get(lockPath) ?? Promise.resolve()).then(run);
+  const tail = current.then(() => {}, () => {});
+  explicitRuns.set(lockPath, tail);
+  void tail.then(() => { if (explicitRuns.get(lockPath) === tail) explicitRuns.delete(lockPath); });
+  return current;
 }
 
 function checkFailureMessage(error) {
@@ -296,6 +319,13 @@ export async function projectChecksAt(root, { name = '', signal, store = default
   await mkdir(store, { recursive: true });
   if (speculative && !recipe.onEdit) throw new Error(`Recipe ${name} is not marked onEdit`);
   const lockPath = path.join(store, `${hash(root)}.active`);
+  const locked = () => runLocked({ root, name, signal, store, speculative, recipe, digest, origin, lockPath });
+  return speculative ? locked() : queued(lockPath, locked);
+}
+
+async function runLocked({ root, name, signal, store, speculative, recipe, digest, origin, lockPath }) {
+  // A call cancelled while it waited for the one before it never starts and leaves no receipt.
+  if (signal?.aborted) throw new Error('Cancelled before execution; nothing was started');
   const lock = await acquireLock(lockPath);
   const id = randomUUID(); const started = Date.now();
   let receipt; let output = ''; let completed = false; let executionStarted = false;
