@@ -38,7 +38,9 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "verify": "npm run check && npm test",
+    "mutations": "node test/mutations.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.2.0",
