@@ -93,6 +93,56 @@ test('timeout preserves uncertainty marker and prevents blind replay', async t =
   await assert.rejects(projectChecks({ ...f, name: 'wait' }), /outcome uncertain/);
 });
 
+// 14 days of sessions (2026-10-21..11-04): 35 "Prior check active" refusals, 25 of them a second check of the same
+// reply (typecheck + unit), which Pi runs together. Checks of one repository from one process now run in turn.
+test('explicit checks of one repository started together run one after the other', async t => {
+  const slow = (label) => ({ description: label, argv: [process.execPath, '-e', `setTimeout(()=>console.log('${label}'),300)`], timeoutMs: 5000 });
+  const f = await fixture(t, { typecheck: slow('types-ok'), unit: slow('unit-ok'), lint: slow('lint-ok') });
+  const results = await Promise.all(['typecheck', 'unit', 'lint'].map(name => projectChecks({ ...f, name })));
+  assert.deepEqual(results.map(r => r.status), ['passed', 'passed', 'passed']);
+  assert.deepEqual(results.map(r => r.output.trim()), ['types-ok', 'unit-ok', 'lint-ok']);
+  assert.deepEqual((await readdir(f.store)).filter(x => x.endsWith('.active')), [], 'every run released the lock');
+});
+
+test('a queued check whose caller aborted never starts', async t => {
+  const f = await fixture(t, { first: { description: 'Slow', argv: [process.execPath, '-e', 'setTimeout(()=>{},300)'], timeoutMs: 5000 }, second: { description: 'Marker', argv: [process.execPath, '-e', "require('fs').writeFileSync(process.argv[1],'ran')", path.join(os.tmpdir(), 'never')], timeoutMs: 5000 } });
+  const controller = new AbortController();
+  const first = projectChecks({ ...f, name: 'first' });
+  // Either call may reach the queue first, so the rejection is awaited from the start, not after the first check.
+  const second = assert.rejects(projectChecks({ ...f, name: 'second', signal: controller.signal }), /Cancelled before execution/);
+  controller.abort();
+  assert.equal((await first).status, 'passed');
+  await second;
+  assert.equal((await readdir(f.store)).filter(x => x.endsWith('.json')).length, 1, 'only the first check left a receipt');
+});
+
+test('a marker left by an uncertain run names the run and the evidence to read', async t => {
+  const f = await fixture(t, { wait: { description: 'Timeout', argv: [process.execPath, '-e', 'setInterval(()=>{},100)'], timeoutMs: 100 } });
+  const result = await projectChecks({ ...f, name: 'wait' });
+  await assert.rejects(projectChecks({ ...f, name: 'wait' }), error => {
+    assert.match(error.message, /outcome uncertain/);
+    assert.match(error.message, /"wait"/);
+    assert.ok(error.message.includes(`project_evidence id=${result.id}`), error.message);
+    assert.match(error.message, /Nothing was started/);
+    return true;
+  });
+});
+
+test('a marker held by another live process says it is running and to call again', async t => {
+  const f = await fixture(t);
+  await mkdir(f.store, { recursive: true });
+  const { createHash } = await import('node:crypto');
+  const marker = path.join(f.store, `${createHash('sha256').update(await realpath(f.root)).digest('hex')}.active`);
+  const child = (await import('node:child_process')).spawn(process.execPath, ['-e', 'setTimeout(()=>{},5000)']);
+  t.after(() => child.kill());
+  await writeFile(marker, JSON.stringify({ id: 'abc', pid: child.pid, name: 'unit', started: Date.now() }));
+  await assert.rejects(projectChecks({ ...f, name: 'smoke' }), error => {
+    assert.match(error.message, /"unit".*running in process \d+/);
+    assert.match(error.message, /call again when it ends/);
+    return true;
+  });
+});
+
 test('a launch that never started leaves a not_started receipt and releases the lock', async t => {
   const f = await fixture(t, {
     missing: { description: 'Missing fixture executable', argv: ['pi-ripwire-nonexistent-fixture-executable'], timeoutMs: 1000 },
