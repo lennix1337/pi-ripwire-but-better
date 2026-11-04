@@ -20,6 +20,7 @@ test('enforce exactly one repository root', async t => {
   const f = await fixture(t);
   assert.equal(await repositoryRoot(f.root), await (await import('node:fs/promises')).realpath(f.root));
   await assert.rejects(repositoryRoot(path.join(f.root, '.pi')), /single repository root/);
+  await assert.rejects(repositoryRoot(path.dirname(f.root)), /Git repository root/);
 });
 
 test('source fingerprint catches tracked, staged, untracked changes', async t => {

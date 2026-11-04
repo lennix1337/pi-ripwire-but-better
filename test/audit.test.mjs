@@ -83,6 +83,7 @@ test('large evidence stays bounded and Unicode pages reconstruct the original', 
     assert.equal(empty.nextOffset, null);
   }
   await assert.rejects(evidence({ store, id, offset: Number.MAX_SAFE_INTEGER + 1 }), /bounds/);
+  await assert.rejects(evidence({ store, id, limit: 12001 }), /bounds/);
 });
 
 test('ranged evidence matches canonical UTF-8 paging across boundaries', async t => {
