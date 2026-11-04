@@ -33,6 +33,16 @@ test('real Pi loader registers exactly three tools and no prompt-shaping hooks',
   assert.match(result.content[0].text, /single repository root/);
 });
 
+test('navigation and evidence reads declare readOnlyHint; check runs do not', async () => {
+  // pi-optchat lets readOnlyHint tools through while an earlier call's outcome is uncertain; project_checks executes recipes and must stay blocked.
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], root);
+  const hint = name => loaded.extensions[0].tools.get(name).definition.annotations?.readOnlyHint;
+  assert.equal(hint('ripwire'), true);
+  assert.equal(hint('project_evidence'), true);
+  assert.notEqual(hint('project_checks'), true);
+});
+
 test('native check launch failures stay errors with actionable saved evidence and no stranded lock', async t => {
   const f = await fixtureRepo(t, {
     missing: { description: 'Missing executable', argv: ['pi-ripwire-missing-launch-fixture'], timeoutMs: 1000 },
