@@ -43,7 +43,7 @@ export default function extension(pi: ExtensionAPI) {
     return { content: [...event.content, { type: 'text' as const, text: notes.join('\n') }], structuredContent: event.structuredContent };
   });
   pi.registerTool({
-    name: 'ripwire', label: 'Ripwire',
+    name: 'ripwire', label: 'Ripwire', annotations: { readOnlyHint: true },
     description: 'Navigate one Git repository with bounded structural context. Start with task + query; use callers/impact for known symbols. Fixed verbs, no shell. Full output is available through project_evidence. Does not run builds. With PI_RIPWIRE_RESIDENT=1, search/task use session-owned MCP and report transport/freshness; other actions keep CLI.',
     parameters: Type.Object({
       root: Type.String({ description: 'Absolute root of one Git repository, not its parent or subdirectory' }),
@@ -75,7 +75,7 @@ export default function extension(pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
-    name: 'project_evidence', label: 'Project evidence',
+    name: 'project_evidence', label: 'Project evidence', annotations: { readOnlyHint: true },
     description: 'Read a bounded UTF-8 byte page of saved output by receipt id. Receipts are historical, not proof that current sources or environment still pass. Follow nextOffset; logs remain local and may contain project-sensitive data.',
     parameters: Type.Object({ id: Type.String(), offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 4, maximum: 12000 })) }, { additionalProperties: false }),
     async execute(_id, params) {
