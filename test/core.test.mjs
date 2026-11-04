@@ -285,3 +285,57 @@ test('a fingerprint canonicalises the repository root once, not once per untrack
   assert.equal(fingerprinted.digest, (await fingerprint(root)).digest);
   assert.ok(rootCalls.length <= 1, `root canonicalised ${rootCalls.length} times for 20 untracked files`);
 });
+
+// 14 days of sessions: typecheck and unit of one reply ran one after the other (the queue above), so the second
+// call's latency was both durations (project_checks p95 1.7 s -> 5.0 s in the paired bench). Recipes that declare
+// `parallel` write nothing the fingerprint sees, so they may overlap each other; every other check stays exclusive.
+const rendezvous = (dir, me, other) => ({ description: `Rendezvous ${me}`, parallel: true, timeoutMs: 8000, argv: [process.execPath, '-e', `
+const fs = require('fs'); const d = ${JSON.stringify(dir)};
+fs.writeFileSync(d + '/${me}.start', '1');
+const end = Date.now() + 4000;
+(function wait() { if (fs.existsSync(d + '/${other}.start')) process.exit(0); if (Date.now() > end) process.exit(3); setTimeout(wait, 20); })();`] });
+const windowed = (dir, me, parallel) => ({ description: `Windowed ${me}`, ...(parallel && { parallel: true }), timeoutMs: 8000, argv: [process.execPath, '-e', `
+const fs = require('fs'); const d = ${JSON.stringify(dir)};
+const seen = fs.readdirSync(d).filter(f => f.endsWith('.start') && !fs.existsSync(d + '/' + f.replace('.start', '.end')));
+fs.writeFileSync(d + '/${me}.start', '1');
+setTimeout(() => { fs.writeFileSync(d + '/${me}.end', '1'); process.exit(seen.length ? 4 : 0); }, 300);`] });
+
+test('parallel recipes of one repository overlap; a serialized pair could never meet', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'pi-ripwire-rdv-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const f = await fixture(t, { a: rendezvous(dir, 'a', 'b'), b: rendezvous(dir, 'b', 'a') });
+  const results = await Promise.all([projectChecks({ ...f, name: 'a' }), projectChecks({ ...f, name: 'b' })]);
+  assert.deepEqual(results.map(r => r.status), ['passed', 'passed']);
+  assert.deepEqual(await readdir(f.store).then(names => names.filter(n => n.endsWith('.active') || n.includes('.active.'))), [], 'no marker left behind');
+});
+
+test('a check that is not parallel never overlaps one that is, in either order', async t => {
+  for (const order of [['x', 'p'], ['p', 'x']]) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'pi-ripwire-ex-')); t.after(() => rm(dir, { recursive: true, force: true }));
+    const f = await fixture(t, { x: windowed(dir, 'x', false), p: windowed(dir, 'p', true) });
+    const results = await Promise.all(order.map(name => projectChecks({ ...f, name })));
+    assert.deepEqual(results.map(r => r.status), ['passed', 'passed'], order.join('>'));
+  }
+});
+
+test('parallel must be a boolean', async t => {
+  const f = await fixture(t, { a: { description: 'x', parallel: 'yes', timeoutMs: 1000, argv: [process.execPath, '-e', '0'] } });
+  await assert.rejects(projectChecks(f), /parallel must be a boolean/);
+});
+
+test('a parallel check that ended uncertain keeps blocking exclusive checks, not other parallel ones', async t => {
+  const hang = { description: 'Hang past its timeout', parallel: true, timeoutMs: 200, argv: [process.execPath, '-e', 'setTimeout(() => {}, 5000)'] };
+  const ok = { description: 'Quick', parallel: true, timeoutMs: 4000, argv: [process.execPath, '-e', '0'] };
+  const f = await fixture(t, { hang, ok, exclusive: { ...ok, parallel: undefined } });
+  assert.equal((await projectChecks({ ...f, name: 'hang' }).catch(error => error)).status ?? 'threw', 'timeout');
+  assert.equal((await projectChecks({ ...f, name: 'ok' })).status, 'passed');
+  await assert.rejects(projectChecks({ ...f, name: 'exclusive' }), /parallel check\(s\) "hang"/);
+});
+
+test('an exclusive check that ended uncertain blocks parallel checks too, and the refused one leaves no marker', async t => {
+  const hang = { description: 'Hang past its timeout', timeoutMs: 200, argv: [process.execPath, '-e', 'setTimeout(() => {}, 5000)'] };
+  const ok = { description: 'Quick', parallel: true, timeoutMs: 4000, argv: [process.execPath, '-e', '0'] };
+  const f = await fixture(t, { hang, ok });
+  assert.equal((await projectChecks({ ...f, name: 'hang' }).catch(error => error)).status ?? 'threw', 'timeout');
+  await assert.rejects(projectChecks({ ...f, name: 'ok' }), /outcome uncertain/);
+  assert.deepEqual(await readdir(f.store).then(names => names.filter(n => n.includes('.active.'))), [], 'refused parallel start removed its own marker');
+});

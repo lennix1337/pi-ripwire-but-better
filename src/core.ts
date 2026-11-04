@@ -223,7 +223,8 @@ export async function evidence({ id, offset = 0, limit = 6000, store = defaultSt
   }
 }
 
-function validateEditTrigger(name, { onEdit, watch }) {
+function validateEditTrigger(name, { onEdit, watch, parallel }) {
+  if (parallel !== undefined && typeof parallel !== 'boolean') throw new Error(`parallel must be a boolean: ${name}`);
   if (onEdit !== undefined && typeof onEdit !== 'boolean') throw new Error(`onEdit must be a boolean: ${name}`);
   const relativePrefix = x => typeof x === 'string' && x && !path.isAbsolute(x) && !x.split(/[\\/]/).includes('..');
   if (watch !== undefined && (!Array.isArray(watch) || watch.length > 20 || !watch.every(relativePrefix))) throw new Error(`watch must list up to 20 relative path prefixes: ${name}`);
@@ -263,18 +264,54 @@ export async function loadRecipes(root, { canonicalize = realpath } = {}) {
   return { config, digest: hash(raw), origin };
 }
 
-async function acquireLock(lockPath) {
-  try { return await open(lockPath, 'wx', 0o600); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+// The exclusive marker is `lockPath`; parallel runs each hold `lockPath.<uuid>`. A starter creates its own marker first
+// and then looks for a conflicting one, so two processes that start together both see the other and one backs off.
+async function exclusiveHolder(lockPath) {
   let marker;
-  try { marker = JSON.parse(await readFile(lockPath, 'utf8')); } catch { marker = {}; /* Unreadable or half-written marker: treat as a non-speculative uncertain run. */ }
+  try { marker = JSON.parse(await readFile(lockPath, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; marker = {}; /* Unreadable or half-written marker: treat as a non-speculative uncertain run. */ }
   if (marker.speculative && !pidAlive(marker.pid)) {
     // onEdit recipes are declared side-effect free, so a speculative marker whose Pi process died is safe to clear.
     await unlink(lockPath);
-    return open(lockPath, 'wx', 0o600);
+    return null;
   }
   const error = new Error(marker.speculative ? `An automatic onEdit check (${marker.name}) is running for this repository; call again when it ends.` : heldMessage(marker, lockPath));
   error.code = 'CHECK_ACTIVE';
-  throw error;
+  return error;
+}
+
+async function parallelMarkers(lockPath, except = '') {
+  const prefix = `${path.basename(lockPath)}.`;
+  const names = (await readdir(path.dirname(lockPath))).filter(n => n.startsWith(prefix) && path.join(path.dirname(lockPath), n) !== except);
+  return Promise.all(names.map(async n => {
+    const file = path.join(path.dirname(lockPath), n);
+    try { return { file, marker: JSON.parse(await readFile(file, 'utf8')) }; } catch (error) { return error.code === 'ENOENT' ? null : { file, marker: {} }; }
+  })).then(found => found.filter(Boolean));
+}
+
+async function acquireLock(lockPath, { shared = false, name } = {}) {
+  if (shared) {
+    const own = `${lockPath}.${randomUUID()}`;
+    const handle = await open(own, 'wx', 0o600);
+    const held = await exclusiveHolder(lockPath);
+    if (held) { await handle.close(); await unlink(own); throw held; }
+    return Object.assign(handle, { path: own });
+  }
+  let handle;
+  try { handle = await open(lockPath, 'wx', 0o600); } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const held = await exclusiveHolder(lockPath);
+    if (held) throw held;
+    handle = await open(lockPath, 'wx', 0o600);
+  }
+  // A parallel run of this process finished before we got here (see scheduled); anything left is another process or an uncertain end.
+  const others = await parallelMarkers(lockPath);
+  if (others.length) {
+    await handle.close(); await unlink(lockPath);
+    const error = new Error(`${others.length} parallel check(s) ${others.map(o => `"${o.marker.name ?? 'unknown'}"`).join(', ')} hold this repository (running in another Pi process, or ended with an uncertain outcome: read project_evidence${others[0].marker.id ? ` id=${others[0].marker.id}` : ''}, then remove ${others[0].file}); call again when they end. Nothing was started.`);
+    error.code = 'CHECK_ACTIVE';
+    throw error;
+  }
+  return Object.assign(handle, { path: lockPath });
 }
 
 // Explicit runs of this process are queued (see queued), so a marker of this process, or of a process that is gone,
@@ -290,14 +327,24 @@ function heldMessage(marker, lockPath) {
 }
 
 // Pi runs a reply's tool calls together: over 14 days, 25 of 35 "check active" refusals were a second check of the same
-// reply (typecheck + unit). Explicit checks of one repository from this process therefore run one after another.
-const explicitRuns = new Map();
-function queued(lockPath, run) {
-  const current = (explicitRuns.get(lockPath) ?? Promise.resolve()).then(run);
-  const tail = current.then(() => {}, () => {});
-  explicitRuns.set(lockPath, tail);
-  void tail.then(() => { if (explicitRuns.get(lockPath) === tail) explicitRuns.delete(lockPath); });
-  return current;
+// reply (typecheck + unit). Explicit checks of one repository from this process therefore take turns, in call order:
+// recipes that declare `parallel` (they write nothing the source fingerprint sees) share a turn, every other one is alone in it.
+const schedules = new Map();
+function scheduled(lockPath, shared, run) {
+  const state = schedules.get(lockPath) ?? { active: 0, exclusive: false, waiting: [] };
+  schedules.set(lockPath, state);
+  const pump = () => {
+    while (state.waiting.length) {
+      const job = state.waiting[0];
+      if (job.shared ? state.exclusive : state.active > 0) break;
+      state.waiting.shift(); state.active++; state.exclusive = !job.shared;
+      job.run().then(job.resolve, job.reject).finally(() => {
+        state.active--; if (!state.active) state.exclusive = false;
+        if (!state.active && !state.waiting.length) schedules.delete(lockPath); else pump();
+      });
+    }
+  };
+  return new Promise((resolve, reject) => { state.waiting.push({ shared, run, resolve, reject }); pump(); });
 }
 
 function checkFailureMessage(error) {
@@ -320,13 +367,13 @@ export async function projectChecksAt(root, { name = '', signal, store = default
   if (speculative && !recipe.onEdit) throw new Error(`Recipe ${name} is not marked onEdit`);
   const lockPath = path.join(store, `${hash(root)}.active`);
   const locked = () => runLocked({ root, name, signal, store, speculative, recipe, digest, origin, lockPath });
-  return speculative ? locked() : queued(lockPath, locked);
+  return speculative ? locked() : scheduled(lockPath, recipe.parallel === true, locked);
 }
 
 async function runLocked({ root, name, signal, store, speculative, recipe, digest, origin, lockPath }) {
   // A call cancelled while it waited for the one before it never starts and leaves no receipt.
   if (signal?.aborted) throw new Error('Cancelled before execution; nothing was started');
-  const lock = await acquireLock(lockPath);
+  const lock = await acquireLock(lockPath, { shared: recipe.parallel === true && !speculative, name });
   const id = randomUUID(); const started = Date.now();
   let receipt; let output = ''; let completed = false; let executionStarted = false;
   try {
@@ -356,6 +403,6 @@ async function runLocked({ root, name, signal, store, speculative, recipe, diges
   } finally {
     await lock.close();
     // Keep the marker if execution/state capture did not complete. User inspects it before removal.
-    if (completed || !executionStarted) await unlink(lockPath);
+    if (completed || !executionStarted) await unlink(lock.path);
   }
 }
