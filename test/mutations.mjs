@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const cases = [
   ['repository-root', 'src/core.ts', 'if (actual !== root)', 'if (false)', 'enforce exactly one repository root', 'core'],
-  ['repository-required', 'src/core.ts', "if (result.code !== 0) throw new Error('Project must be a Git repository root');", "if (result.code !== 0) return root;", 'enforce exactly one repository root', 'core'],
+  ['repository-required', 'src/core.ts', "if (result.code !== 0) throw new Error(`Project must be a Git repository root: ${root} is not a Git repository; pass the root of one repository, not a folder that groups several`);", "if (result.code !== 0) return root;", 'enforce exactly one repository root', 'core'],
   ['action-allow-list', 'src/core.ts', 'if (!actions.includes(action))', 'if (false)', 'fixed arguments keep hostile', 'core'],
   ['evidence-bounds', 'src/core.ts', 'limit > 12000', 'limit > 120000', 'large evidence stays bounded', 'audit'],
   ['utf8-pagination', 'src/core.ts', "if (loaded && (buffer[0] & 0xc0) === 0x80)", 'if (false)', 'UTF-8 pagination rejects offsets', 'audit'],
