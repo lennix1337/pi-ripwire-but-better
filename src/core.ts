@@ -46,6 +46,24 @@ function plainOutputEnv() {
   return { ...env, NO_COLOR: '1' };
 }
 
+// Bytes of the UTF-8 sequence that starts with this byte; 0 for a continuation byte.
+const sequenceWidth = byte => (byte < 0x80 ? 1 : byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 0);
+
+// The end of the whole characters in a capture cut at the byte limit: a sequence the cut split (its lead byte is
+// within the last three bytes) is excluded, so the partial tail is not decoded to U+FFFD.
+function wholeCharactersEnd(bytes) {
+  for (let i = bytes.length - 1; i >= Math.max(0, bytes.length - 4); i--) {
+    const width = sequenceWidth(bytes[i]);
+    if (width) return bytes.length - i < width ? i : bytes.length;
+  }
+  return bytes.length;
+}
+
+// Complete output decodes unchanged; only a capture cut at the limit is trimmed.
+export function captureText(bytes, truncated) {
+  return bytes.subarray(0, truncated ? wholeCharactersEnd(bytes) : bytes.length).toString('utf8');
+}
+
 // `stderr: false` drops diagnostics from the output, for callers that hash it as data.
 export async function execute(command, args, { cwd, signal, timeout = 30000, limit = maxLog, stderr = true } = {}) {
   if (signal?.aborted) throw new Error('Cancelled before execution');
@@ -78,7 +96,7 @@ export async function execute(command, args, { cwd, signal, timeout = 30000, lim
     // A spawn failure (ENOENT, EACCES) fires before the process exists: pid is undefined and nothing ran.
     child.on('error', error => { cleanup(); if (child.pid === undefined) error.notStarted = true; reject(error); });
     child.on('close', (code, terminationSignal) => {
-      cleanup(); resolve({ code, signal: terminationSignal, reason, output: Buffer.concat(chunks).toString('utf8'), bytes, truncated: bytes > limit });
+      cleanup(); resolve({ code, signal: terminationSignal, reason, output: captureText(Buffer.concat(chunks), bytes > limit), bytes, truncated: bytes > limit });
     });
   });
 }
@@ -191,7 +209,8 @@ export async function navigateResident({ root, action, query = '', signal, store
   return { ...receipt, ...page(result.output, 0, 6000) };
 }
 
-function page(output, offset, limit) {
+// Exported as a pure seam: the in-memory pager (navigate, projectChecks) is checked against the saved-evidence pager.
+export function page(output, offset, limit) {
   const bytes = Buffer.from(output);
   if (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) throw new Error('Offset must be a UTF-8 code point boundary; use nextOffset');
   let end = Math.min(bytes.length, offset + limit);
