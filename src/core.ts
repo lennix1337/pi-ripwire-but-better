@@ -40,13 +40,19 @@ export async function reapStaleHeadTrees({ bases = cacheBases(), alive = pidAliv
   return removed;
 }
 
+// The output goes to a model, not a terminal: color codes are tokens that carry nothing (pwsh error records were ~18% escapes).
+function plainOutputEnv() {
+  const { FORCE_COLOR: _forced, ...env } = process.env;
+  return { ...env, NO_COLOR: '1' };
+}
+
 // `stderr: false` drops diagnostics from the output, for callers that hash it as data.
 export async function execute(command, args, { cwd, signal, timeout = 30000, limit = maxLog, stderr = true } = {}) {
   if (signal?.aborted) throw new Error('Cancelled before execution');
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(command, args, { cwd, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', stderr ? 'pipe' : 'ignore'] });
+      child = spawn(command, args, { cwd, env: plainOutputEnv(), shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', stderr ? 'pipe' : 'ignore'] });
     } catch (error) {
       error.notStarted = true;
       reject(error);
