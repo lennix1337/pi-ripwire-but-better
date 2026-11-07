@@ -87,7 +87,7 @@ export async function repositoryRoot(input) {
   if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error('Use an absolute repository root');
   const root = await realpath(input);
   const result = await execute('git', ['-C', root, 'rev-parse', '--show-toplevel']);
-  if (result.code !== 0) throw new Error('Project must be a Git repository root');
+  if (result.code !== 0) throw new Error(`Project must be a Git repository root: ${root} is not a Git repository; pass the root of one repository, not a folder that groups several`);
   const actual = await realpath(result.output.trim());
   if (actual !== root) throw new Error(`Use the single repository root: ${actual}`);
   return root;

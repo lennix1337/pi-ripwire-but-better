@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, realpath } from 'node:fs/promises';
@@ -16,11 +17,14 @@ test('fixed arguments keep hostile shell text as data and reject unsupported ope
   assert.throws(() => ripwireArgs('/repo', 'search', 'x\ny'), /Invalid/);
 });
 
+const await_real = p => realpathSync(p);
+
 test('enforce exactly one repository root', async t => {
   const f = await fixture(t);
   assert.equal(await repositoryRoot(f.root), await (await import('node:fs/promises')).realpath(f.root));
   await assert.rejects(repositoryRoot(path.join(f.root, '.pi')), /single repository root/);
-  await assert.rejects(repositoryRoot(path.dirname(f.root)), /Git repository root/);
+  const outside = path.dirname(f.root);
+  await assert.rejects(repositoryRoot(outside), error => /Git repository root/.test(error.message) && error.message.includes(await_real(outside)) && /not a Git repository/.test(error.message));
 });
 
 test('source fingerprint catches tracked, staged, untracked changes', async t => {
