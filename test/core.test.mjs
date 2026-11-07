@@ -340,3 +340,15 @@ test('an exclusive check that ended uncertain blocks parallel checks too, and th
   await assert.rejects(projectChecks({ ...f, name: 'ok' }), /outcome uncertain/);
   assert.deepEqual(await readdir(f.store).then(names => names.filter(n => n.includes('.active.'))), [], 'refused parallel start removed its own marker');
 });
+
+test('a command run for the model gets plain text: color codes are asked off and forced color is dropped', async () => {
+  const probe = "console.log(JSON.stringify([process.env.NO_COLOR, process.env.FORCE_COLOR ?? null]))";
+  const previous = process.env.FORCE_COLOR;
+  process.env.FORCE_COLOR = '1';
+  try {
+    const result = await execute(process.execPath, ['-e', probe]);
+    assert.deepEqual(JSON.parse(result.output), ['1', null]);
+  } finally {
+    if (previous === undefined) delete process.env.FORCE_COLOR; else process.env.FORCE_COLOR = previous;
+  }
+});
