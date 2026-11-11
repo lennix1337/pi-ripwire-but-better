@@ -113,8 +113,8 @@ Receipts/logs live outside repos: `~/.pi/agent/evidence/pi-ripwire` (override wi
 ## Verification
 
 ```sh
-npm run check
-npm test
+npm run verify      # npm run check (types) + npm test
+npm run mutations   # each guard removed in a disposable copy must fail a test
 # Optional developer integration against an installed OptChat checkout, synthetic provider only:
 PI_RIPWIRE_OPTCHAT=C:/projetos/pi-optchat node --experimental-transform-types --test test/session.test.mjs
 ```
