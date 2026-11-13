@@ -37,5 +37,4 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm pack --dry-run
-      # The repository is private, so provenance attestations are unavailable.
-      - run: npm publish --access public --provenance=false
+      - run: npm publish --access public --provenance
