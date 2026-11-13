@@ -1,6 +1,6 @@
 {
   "name": "@lennix1337/pi-ripwire-but-better",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Native Pi extension for Ripwire code navigation, explicit project checks, and bounded, inspectable evidence.",
   "license": "MIT",
@@ -8,16 +8,27 @@
     "type": "git",
     "url": "git+https://github.com/lennix1337/pi-ripwire-but-better.git"
   },
-  "homepage": "https://www.npmjs.com/package/@lennix1337/pi-ripwire-but-better",
-  "bugs": "https://github.com/lennix1337/pi-ripwire-but-better/issues",
+  "homepage": "https://github.com/lennix1337/pi-ripwire-but-better#readme",
+  "bugs": {
+    "url": "https://github.com/lennix1337/pi-ripwire-but-better/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
   "keywords": [
     "pi-package",
     "pi-extension",
+    "pi",
+    "pi-coding-agent",
     "ripwire",
-    "validation"
+    "code-navigation",
+    "code-intelligence",
+    "impact-analysis",
+    "callers",
+    "static-analysis",
+    "validation",
+    "ai-agent",
+    "developer-tools"
   ],
   "pi": {
     "extensions": [
