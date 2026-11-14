@@ -1,7 +1,7 @@
 // @ts-nocheck -- untyped JavaScript kept in a .ts file so Pi's /reload re-reads it (see test/loader.test.mjs); it was never type-checked as .mjs.
 import path from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { execute, fingerprint, loadRecipes, projectChecks } from './core.ts';
+import { execute, fingerprint, loadRecipes, page, projectChecks, tailStart } from './core.ts';
 
 async function gitRoot(dir) {
   const result = await execute('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { timeout: 10000 });
@@ -19,7 +19,8 @@ function note(result, current) {
     return `${head} ${result.status === 'passed' ? 'passed' : `FAILED (exit ${result.exitCode})`} on ${why} (receipt ${result.id}); it is no evidence about the current code, and project_checks runs it again.`;
   }
   if (result.status === 'passed') return `${head} passed in ${seconds} s on the current sources (receipt ${result.id}); project_checks returns it without re-running.`;
-  return `${head} FAILED (exit ${result.exitCode}, ${seconds} s, receipt ${result.id}):\n${result.output.slice(0, 1500)}`;
+  // The end of the log: with a test runner, its first 1.5 KB is a list of passing tests.
+  return `${head} FAILED (exit ${result.exitCode}, ${seconds} s, receipt ${result.id}):\n${page(result.output, tailStart(result.output, 1500), 1500).output}`;
 }
 
 // After an edit, run the repository's onEdit recipes in the background so the explicit project_checks call,
