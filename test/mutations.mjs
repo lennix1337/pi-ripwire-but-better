@@ -13,6 +13,7 @@ const cases = [
   ['evidence-bounds', 'src/core.ts', 'limit > 12000', 'limit > 120000', 'large evidence stays bounded', 'audit'],
   ['utf8-pagination', 'src/core.ts', "if (loaded && (buffer[0] & 0xc0) === 0x80)", 'if (false)', 'UTF-8 pagination rejects offsets', 'audit'],
   ['read-only-hint', 'src/index.ts', "name: 'ripwire', label: 'Ripwire', annotations: { readOnlyHint: true }", "name: 'ripwire', label: 'Ripwire', annotations: { readOnlyHint: false }", 'navigation and evidence reads declare readOnlyHint', 'loader'],
+  ['check-tail-page', 'src/core.ts', 'page(output, tailStart(output, 4000), 4000)', 'page(output, 0, 4000)', 'a check returns the end of its output', 'core'],
   // Property tests (test/property-*.test.mjs): each mutant reverts one guard or one past bug.
   ['page-utf8-backoff', 'src/core.ts', 'while (end > offset && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;', '', 'pagination walks any UTF-8', 'property-pagination'],
   ['page-offset-guard', 'src/core.ts', "if (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) throw new Error('Offset must be a UTF-8 code point boundary; use nextOffset');", '', 'pagination rejects every offset', 'property-pagination'],
@@ -28,6 +29,7 @@ const cases = [
   ['capture-split-kept', 'src/core.ts', 'return bytes.length - i < width ? i : bytes.length;', 'return bytes.length;', 'captured output keeps', 'property-pagination'],
   ['capture-width-four', 'src/core.ts', 'byte >= 0xf0 ? 4', 'byte >= 0xf0 ? 3', 'captured output keeps', 'property-pagination'],
   ['capture-lookback', 'src/core.ts', 'i >= Math.max(0, bytes.length - 4)', 'i >= Math.max(0, bytes.length - 1)', 'captured output keeps', 'property-pagination'],
+  ['tail-utf8-boundary', 'src/core.ts', 'while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;', '', 'the tail page starts on a character', 'property-pagination'],
   ['resident-chunk-decoder', 'src/resident.ts', 'buffer += decoder.write(data);', 'buffer += data.toString();', 'resident frames decode', 'property-resident'],
   ['resident-line-consume', 'src/resident.ts', 'buffer = buffer.slice(end + 1);', 'buffer = buffer.slice(end);', 'resident frames decode', 'property-resident'],
 ];

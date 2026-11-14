@@ -218,6 +218,15 @@ export function page(output, offset, limit) {
   return { output: bytes.subarray(offset, end).toString('utf8'), offset, nextOffset: end < bytes.length ? end : null, totalBytes: bytes.length };
 }
 
+// Offset of the last `limit` bytes of a log, moved forward when it falls inside a character:
+// page(output, tailStart(output, limit), limit) is the end of the log, where runners print their verdict.
+export function tailStart(output, limit) {
+  const bytes = Buffer.from(output);
+  let start = Math.max(0, bytes.length - limit);
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;
+  return start;
+}
+
 export async function evidence({ id, offset = 0, limit = 6000, store = defaultStore() }) {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid evidence id');
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 4 || limit > 12000) throw new Error('Invalid page bounds');
@@ -416,7 +425,8 @@ async function runLocked({ root, name, signal, store, speculative, recipe, diges
     receipt = { ...receipt, status: result.reason || (result.signal ? 'outcome_uncertain' : !unchanged ? 'source_changed' : result.code === 0 ? 'passed' : 'failed'), exitCode: result.code, elapsedMs: Date.now() - started, unchanged, after, truncated: result.truncated, interpretation: 'Only this named check; ignored inputs and full product flow not validated' };
     // A speculative run we cancelled has exited (execute resolves on close), so its marker carries no uncertainty.
     await save(store, id, output, receipt); completed = (!result.reason && result.signal === null) || (speculative && result.reason === 'cancelled');
-    return { ...receipt, ...page(output, 0, 4000) };
+    // The failing assertion and the totals are at the end of a log; its beginning is project_evidence offset 0.
+    return { ...receipt, ...page(output, tailStart(output, 4000), 4000) };
   } catch (error) {
     if (error.notStarted) executionStarted = false;
     if (receipt) {

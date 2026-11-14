@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { page, evidence, execute, captureText } from '../src/core.ts';
+import { page, tailStart, evidence, execute, captureText } from '../src/core.ts';
 import { CASES, rng, pick, int } from './property-support.mjs';
 
 // One character of each UTF-8 width (1 to 4 bytes), a combining mark and line breaks: a page must never split any of them.
@@ -62,6 +62,28 @@ test('pagination rejects every offset inside a character', () => {
       assert.throws(() => page(text, offset, 4000), /UTF-8 code point boundary/, `seed ${seed} offset ${offset}`);
     }
   }
+});
+
+// The page a check returns: the last `limit` bytes of the log, starting on a character.
+test('the tail page starts on a character, fits the limit and reaches the end of the text', () => {
+  let whole = 0; let moved = 0;
+  for (let seed = 1; seed <= CASES; seed++) {
+    const next = rng(seed); const text = randomText(next);
+    const { marks, total } = boundaries(text); const limit = randomLimit(next);
+    // Model of the contract: the earliest character start from which the rest of the text fits in `limit` bytes.
+    const expected = marks.find(mark => total - mark <= limit);
+    const start = tailStart(text, limit);
+    assert.equal(start, expected, `seed ${seed} limit ${limit} of ${total} bytes: tail does not start at the earliest character that fits`);
+    const got = page(text, start, limit);
+    assert.equal(got.offset + Buffer.byteLength(got.output), total, `seed ${seed}: tail page stops before the end`);
+    assert.equal(got.nextOffset, null, `seed ${seed}: nothing follows the tail page`);
+    assert.equal(got.output, Buffer.from(text).subarray(expected).toString('utf8'), `seed ${seed} limit ${limit}: tail page is not the end of the text`);
+    if (total <= limit) { whole++; assert.equal(start, 0, `seed ${seed}: a text shorter than one page is returned whole`); }
+    else if (start !== total - limit) moved++;
+  }
+  // The generator must keep producing both shapes, or the property above proves less than it says.
+  assert.ok(whole > 0, 'no generated text was shorter than one page');
+  assert.ok(moved > 0, 'no generated cut fell inside a multi-byte character');
 });
 
 test('saved evidence pages the same bytes as the in-memory pager', async () => {

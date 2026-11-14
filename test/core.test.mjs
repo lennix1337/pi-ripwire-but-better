@@ -91,6 +91,28 @@ test('failure is not retried, receipt remains available', async t => {
   assert.equal((await readdir(f.store)).filter(x => x.endsWith('.json')).length, 1);
 });
 
+// Test runners and compilers print the failing assertion and the totals last, so the page a check returns is the end
+// of its log: read from the beginning, the first 4 KB of a suite is a list of passing tests.
+test('a check returns the end of its output, where the runner prints the verdict', async t => {
+  const log = exit => `for (let i = 0; i < 100; i++) console.log('ok ' + String(i).padStart(3, '0') + ' ' + 'x'.repeat(72)); console.log('VERDICT: 1 failed at src/thing.ts:42'); process.exit(${exit})`;
+  const recipe = exit => ({ description: 'About 8 KB of output, verdict last', argv: [process.execPath, '-e', log(exit)], timeoutMs: 20000 });
+  const f = await fixture(t, { red: recipe(1), green: recipe(0) });
+  // One rule for every status: a passing run's totals are at the end too.
+  for (const [name, status] of [['red', 'failed'], ['green', 'passed']]) {
+    const result = await projectChecks({ ...f, name });
+    assert.equal(result.status, status);
+    assert.ok(result.totalBytes > 8000, 'the log is longer than one page');
+    assert.match(result.output, /VERDICT: 1 failed at src\/thing\.ts:42\n$/, `${name}: the returned page ends with the verdict`);
+    assert.ok(result.offset > 0, `${name}: offset says where the returned page starts`);
+    assert.ok(Buffer.byteLength(result.output) <= 4000);
+    assert.equal(result.offset + Buffer.byteLength(result.output), result.totalBytes, `${name}: the page reaches the end of the log`);
+    assert.equal(result.nextOffset, null);
+    const beginning = await evidence({ ...f, id: result.id, offset: 0, limit: result.offset });
+    assert.match(beginning.output, /^ok 000 /, `${name}: the beginning is one evidence read away`);
+    assert.equal(beginning.output + result.output, await readFile(path.join(f.store, `${result.id}.log`), 'utf8'), `${name}: beginning and returned page rebuild the log`);
+  }
+});
+
 test('timeout preserves uncertainty marker and prevents blind replay', async t => {
   const f = await fixture(t, { wait: { description: 'Timeout', argv: [process.execPath, '-e', 'setInterval(()=>{},100)'], timeoutMs: 100 } });
   const result = await projectChecks({ ...f, name: 'wait' });

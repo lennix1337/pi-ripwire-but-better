@@ -114,6 +114,23 @@ test('failures are reported in the next note with their output', async t => {
   assert.deepEqual((await auto.drainNotes()), [], 'a note is delivered once');
 });
 
+// The first 1.5 KB of a failing suite is a list of passing tests; the assertion that failed is printed last.
+test('a failure note carries the end of a long log, where the verdict is', async t => {
+  // '€' is three bytes, and with these lines the 1500-byte cut falls on the last byte of one.
+  const log = "for (let i = 0; i < 100; i++) console.log('ok ' + String(i).padStart(3, '0') + ' ' + '€'.repeat(24)); console.log('VERDICT: 1 failed at src/thing.ts:42'); process.exit(1)";
+  const f = await repo(t, { unit: node(log, { onEdit: true }) });
+  const auto = createAutocheck({ run: recorder(f.store).run, debounceMs: 20 }); t.after(() => auto.dispose());
+  await auto.edited(path.join(f.root, 'src/a.ts'));
+  let notes = [];
+  await until(async () => (notes = (await auto.drainNotes())).length > 0);
+  assert.match(notes[0], /unit FAILED \(exit 1/);
+  assert.match(notes[0], /VERDICT: 1 failed at src\/thing\.ts:42\n$/);
+  const shown = notes[0].slice(notes[0].indexOf('\n') + 1);
+  assert.equal(Buffer.byteLength(shown), 1499, 'the note starts after the character the cut would have split');
+  assert.ok(!shown.includes(String.fromCharCode(0xfffd)), 'no replacement character from a split one');
+  assert.match(shown, /^€+\nok 0\d\d /);
+});
+
 test('an edit during a run cancels it, and the rerun starts after the lock is free', async t => {
   const f = await repo(t, { slow: node("setTimeout(()=>console.log('slow-ok'),1500)", { onEdit: true }) });
   const { runs, run } = recorder(f.store);

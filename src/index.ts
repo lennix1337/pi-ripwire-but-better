@@ -56,7 +56,7 @@ export default function extension(pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: 'project_checks', label: 'Project checks',
-    description: 'List project recipes from .pi/checks.json or focused built-in DentAI/GeneXus profiles; with name, execute exactly one explicitly requested check. Recipes are executable project code: inspect before running. No automatic retries, skips, installs or builds. Recipes marked onEdit also run in the background after edits; a result on the identical source digest is returned with `reused` instead of re-running. Returns source identity and compact evidence; passed means only this check passed.',
+    description: 'List project recipes from .pi/checks.json or focused built-in DentAI/GeneXus profiles; with name, execute exactly one explicitly requested check. Recipes are executable project code: inspect before running. No automatic retries, skips, installs or builds. Recipes marked onEdit also run in the background after edits; a result on the identical source digest is returned with `reused` instead of re-running. Returns source identity and the last 4 KB of output (earlier: project_evidence offset=0); passed means only this check passed.',
     parameters: Type.Object({
       root: Type.String(),
       name: Type.Optional(Type.String({ maxLength: 51, description: 'Omit to inspect available checks and commands first' })),
