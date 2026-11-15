@@ -173,3 +173,16 @@ test('a named project_checks call resolves the repository root with one Git subp
   assert.equal(JSON.parse(result.content[0].text).status, 'passed');
   assert.equal(spawned.filter(args => args.includes('--show-toplevel')).length, 1);
 });
+
+test('an autocheck failure after the session was reloaded never throws from the stale ctx', async t => {
+  const f = await fixtureRepo(t, {});
+  await writeFile(path.join(f.root, '.pi/checks.json'), '{"version": 2}');
+  const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], f.root);
+  const [handler] = loaded.extensions[0].handlers.get('tool_result');
+  const stale = () => { throw new Error('This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.reload().'); };
+  const event = { toolName: 'edit', isError: false, input: { path: path.join(f.root, 'source.txt') }, content: [], parentToolCallId: 'p' };
+  await assert.doesNotReject(handler(event, { cwd: f.root, ui: { notify: stale } }));
+  const seen = [];
+  await handler(event, { cwd: f.root, ui: { notify: (text, level) => seen.push([text, level]) } });
+  assert.match(seen[0]?.[0] ?? '', /pi-ripwire autocheck/);
+});
