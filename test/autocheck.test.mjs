@@ -11,7 +11,7 @@ import { fixtureRepo } from './fixture.mjs';
 const node = (code, extra = {}) => ({ description: 'fixture', argv: [process.execPath, '-e', code], timeoutMs: 20000, ...extra });
 const repo = (t, checks) => fixtureRepo(t, checks, { 'src/a.ts': 'one' });
 
-// Records every run so tests can count real executions.
+
 function recorder(store) {
   const runs = [];
   const run = args => { runs.push(args.name); return projectChecks({ ...args, store }); };
@@ -39,8 +39,8 @@ test('a burst of edits runs each onEdit recipe once and the explicit call reuses
   assert.deepEqual(runs, ['quick']);
 });
 
-// Pi runs a batch of tool calls concurrently, so their tool_result hooks overlap (seen live 2026-10-24: two
-// parallel edits in pi-optchat produced no autocheck at all, the same edits in sequence did).
+
+
 test('concurrent edits from one tool batch still run the onEdit recipes once', async t => {
   const f = await repo(t, { quick: node("console.log('quick-ok')", { onEdit: true }) });
   const { runs, run } = recorder(f.store);
@@ -72,8 +72,8 @@ test('a result is not reused once the sources change', async t => {
   assert.equal(await auto.claim(f.root, 'quick'), null);
 });
 
-// Seen live 2026-10-30: a typecheck note said "passed on the current sources" for code tsc rejected, because the run
-// had finished on the sources before the change that was being reported on.
+
+
 test('a note from a run whose sources changed afterwards does not claim the current sources', async t => {
   const f = await repo(t, { quick: node("console.log('ok')", { onEdit: true }) });
   let done = false;
@@ -92,7 +92,7 @@ test('a note from a run whose sources changed afterwards does not claim the curr
 test('a run that finishes after a newer edit superseded it leaves no note of its own', async t => {
   const f = await repo(t, { quick: node("console.log('ok')", { onEdit: true }) });
   let finished = 0;
-  // A process that completes despite the abort: the run ignores the signal and resolves late.
+
   const run = ({ signal, ...args }) => settle(300).then(() => projectChecks({ ...args, store: f.store })).finally(() => { finished += 1; });
   const auto = createAutocheck({ run, debounceMs: 20 }); t.after(() => auto.dispose());
   const file = path.join(f.root, 'src/a.ts');
@@ -114,9 +114,9 @@ test('failures are reported in the next note with their output', async t => {
   assert.deepEqual((await auto.drainNotes()), [], 'a note is delivered once');
 });
 
-// The first 1.5 KB of a failing suite is a list of passing tests; the assertion that failed is printed last.
+
 test('a failure note carries the end of a long log, where the verdict is', async t => {
-  // '€' is three bytes, and with these lines the 1500-byte cut falls on the last byte of one.
+
   const log = "for (let i = 0; i < 100; i++) console.log('ok ' + String(i).padStart(3, '0') + ' ' + '€'.repeat(24)); console.log('VERDICT: 1 failed at src/thing.ts:42'); process.exit(1)";
   const f = await repo(t, { unit: node(log, { onEdit: true }) });
   const auto = createAutocheck({ run: recorder(f.store).run, debounceMs: 20 }); t.after(() => auto.dispose());
@@ -155,9 +155,9 @@ test('an explicit request for another check stops the speculative run and gets t
   assert.equal(explicit.status, 'passed');
 });
 
-// A sweep that was waiting for the cancelled run of the previous edit used to reset its own state once that run
-// exited, which undid the cancellation of the explicit request that arrived meanwhile and started a speculative run
-// the explicit check had been promised the lock against.
+
+
+
 test('a sweep waiting for a cancelled run does not start once an explicit check has claimed the repository', async t => {
   const root = path.resolve('/virtual/repo');
   const calls = []; let exitCancelledRun;
@@ -172,7 +172,7 @@ test('a sweep waiting for a cancelled run does not start once an explicit check 
   const file = path.join(root, 'src/a.ts');
   await auto.edited(file);
   await until(() => calls.length === 1);
-  await auto.edited(file); // cancels the first run; the second sweep now waits for it to exit
+  await auto.edited(file);
   await settle(60);
   const claimed = auto.claim(root, 'other');
   exitCancelledRun();

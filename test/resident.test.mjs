@@ -15,7 +15,7 @@ async function poolFor(t, options = {}) {
     spawnProcess(binary, args, config) {
       assert.equal(config.shell, false);
       assert.deepEqual(args.slice(1), ['--mcp', '--mcp-tools=grep,for']);
-      // Protocol fixture echoes synthetic roots; only the core integration uses a real Git root.
+
       const child = spawn(process.execPath, [fixture, ...args], { ...config, cwd: dirname(fixture) });
       children.push(child);
       return child;
@@ -106,7 +106,7 @@ test('queued cancellation responds without interrupting or replaying the active 
   const queued = pool.navigate('/root', 'search', 'must-not-dispatch', { signal: controller.signal });
   await new Promise(resolve => setImmediate(resolve));
   controller.abort();
-  // A bounded check distinguishes immediate cancellation from waiting for the active timeout.
+
   let timer;
   try {
     const result = await Promise.race([

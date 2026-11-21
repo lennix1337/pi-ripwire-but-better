@@ -19,7 +19,7 @@ test('real Pi loader registers exactly three tools and no prompt-shaping hooks',
   assert.equal(loaded.extensions.length, 1);
   const extension = loaded.extensions[0];
   assert.deepEqual([...extension.tools.keys()], ['ripwire', 'project_checks', 'project_evidence']);
-  // tool_result only appends onEdit check notes to results; nothing rewrites the prompt or the context.
+
   assert.deepEqual([...extension.handlers.keys()].sort(), ['session_shutdown', 'session_start', 'tool_result']);
   for (const name of ['ripwire', 'project_checks', 'project_evidence']) {
     const definition = extension.tools.get(name).definition;
@@ -34,7 +34,7 @@ test('real Pi loader registers exactly three tools and no prompt-shaping hooks',
 });
 
 test('navigation and evidence reads declare readOnlyHint; check runs do not', async () => {
-  // pi-optchat lets readOnlyHint tools through while an earlier call's outcome is uncertain; project_checks executes recipes and must stay blocked.
+
   const root = fileURLToPath(new URL('../', import.meta.url));
   const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], root);
   const hint = name => loaded.extensions[0].tools.get(name).definition.annotations?.readOnlyHint;
@@ -74,7 +74,7 @@ test('native check launch failures stay errors with actionable saved evidence an
 });
 
 test('/reload picks up edits to every source module, not only the entry', async t => {
-  // jiti hands .mjs files to Node's native import, whose cache never reloads; .ts modules are re-read on each load.
+  // external: Jiti reloads TypeScript modules, but Node caches native mjs imports.
   const repo = fileURLToPath(new URL('../', import.meta.url));
   const dir = await mkdtemp(path.join(repo, 'node_modules', '.reload-'));
   t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
@@ -107,7 +107,7 @@ test('incomplete navigation returns a native error and preserves inspectable rec
   await mkdir(root); await mkdir(bin);
   await writeFile(path.join(root, 'index.js'), "process.stdout.write('x'.repeat(5 * 1024 * 1024));");
   assert.equal((await execute('git', ['init'], { cwd: root })).code, 0);
-  // Node accepts a directory with index.js. The fixture executable never invokes Ripwire.
+
   await copyFile(process.execPath, path.join(bin, process.platform === 'win32' ? 'ripwire.exe' : 'ripwire'));
   process.env.PATH = `${bin}${path.delimiter}${previousPath}`;
   process.env.PI_RIPWIRE_EVIDENCE_DIR = path.join(dir, 'store');
@@ -129,7 +129,7 @@ test('native CLI search compacts only the known legend and retains raw receipt',
   const root = path.join(dir, 'repo'), bin = path.join(dir, 'bin'), store = path.join(dir, 'store');
   await mkdir(root); await mkdir(bin);
   const output = await readFile(new URL('./fixtures/grep-v1.xml', import.meta.url), 'utf8');
-  // A hermetic CLI stand-in: Node executes this directory and emits captured Ripwire output.
+
   await writeFile(path.join(root, 'index.js'), `process.stdout.write(${JSON.stringify(output)});`);
   assert.equal((await execute('git', ['init'], { cwd: root })).code, 0);
   await copyFile(process.execPath, path.join(bin, process.platform === 'win32' ? 'ripwire.exe' : 'ripwire'));
@@ -138,7 +138,7 @@ test('native CLI search compacts only the known legend and retains raw receipt',
   const previous = process.env.PI_RIPWIRE_EVIDENCE_DIR;
   const previousResident = process.env.PI_RIPWIRE_RESIDENT;
   process.env.PI_RIPWIRE_EVIDENCE_DIR = store;
-  process.env.PI_RIPWIRE_RESIDENT = '0'; // This fixture proves CLI output, regardless of the host setting.
+  process.env.PI_RIPWIRE_RESIDENT = '0';
   t.after(async () => {
     if (previous === undefined) delete process.env.PI_RIPWIRE_EVIDENCE_DIR; else process.env.PI_RIPWIRE_EVIDENCE_DIR = previous;
     if (previousResident === undefined) delete process.env.PI_RIPWIRE_RESIDENT; else process.env.PI_RIPWIRE_RESIDENT = previousResident;
@@ -160,7 +160,7 @@ test('native CLI search compacts only the known legend and retains raw receipt',
   assert.equal(saved.details.output, result.details.output);
 });
 
-// A named check already resolves its repository root in the tool; the check itself must not run `git rev-parse` again.
+
 test('a named project_checks call resolves the repository root with one Git subprocess', async t => {
   const f = await fixtureRepo(t, { smoke: { description: 'Print a fixture result', argv: [process.execPath, '-e', "console.log('fixture-ok')"], timeoutMs: 3000 } });
   const loaded = await loadExtensions([fileURLToPath(new URL('../src/index.ts', import.meta.url))], fileURLToPath(new URL('../', import.meta.url)));

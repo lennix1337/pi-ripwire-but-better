@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execute } from '../src/core.ts';
 
-// A committed Git repository with .pi/checks.json and the given files, plus an evidence store outside it.
+
 export async function fixtureRepo(t, checks, files = { 'source.txt': 'initial' }) {
   const base = await mkdtemp(path.join(os.tmpdir(), 'pi-ripwire-'));
   t.after(() => rm(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));

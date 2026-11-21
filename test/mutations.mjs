@@ -14,7 +14,7 @@ const cases = [
   ['utf8-pagination', 'src/core.ts', "if (loaded && (buffer[0] & 0xc0) === 0x80)", 'if (false)', 'UTF-8 pagination rejects offsets', 'audit'],
   ['read-only-hint', 'src/index.ts', "name: 'ripwire', label: 'Ripwire', annotations: { readOnlyHint: true }", "name: 'ripwire', label: 'Ripwire', annotations: { readOnlyHint: false }", 'navigation and evidence reads declare readOnlyHint', 'loader'],
   ['check-tail-page', 'src/core.ts', 'page(output, tailStart(output, 4000), 4000)', 'page(output, 0, 4000)', 'a check returns the end of its output', 'core'],
-  // Property tests (test/property-*.test.mjs): each mutant reverts one guard or one past bug.
+
   ['page-utf8-backoff', 'src/core.ts', 'while (end > offset && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;', '', 'pagination walks any UTF-8', 'property-pagination'],
   ['page-offset-guard', 'src/core.ts', "if (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) throw new Error('Offset must be a UTF-8 code point boundary; use nextOffset');", '', 'pagination rejects every offset', 'property-pagination'],
   ['page-limit-overrun', 'src/core.ts', 'let end = Math.min(bytes.length, offset + limit);', 'let end = Math.min(bytes.length, offset + limit + 1);', 'pagination walks any UTF-8', 'property-pagination'],

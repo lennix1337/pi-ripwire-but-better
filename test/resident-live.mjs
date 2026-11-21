@@ -1,4 +1,4 @@
-// Explicit local integration probe, not part of the hermetic npm test glob.
+
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -48,7 +48,7 @@ try {
   const after = await search('residentAfterChanged');
   assert.equal(after.total, 1, 'resident index must detect changed source without restarting');
   assert.equal((await search('residentBefore')).total, 0, 'removed source must not survive in the hot index');
-  // Normal extension shutdown/reload destroys the old pool and creates a new one.
+
   await shutdown(); tools = await load();
   assert.equal((await search('residentAfterChanged')).total, 1);
   const receipt = { scope: 'Real Pi loader + native tool callback -> real Ripwire MCP -> source-change refresh -> saved evidence -> shutdown/reload; disposable fixture only. Not active-chat reload, model reasoning or real-repository p50.', binary: process.env.PI_RIPWIRE_BINARY, observations };

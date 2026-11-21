@@ -7,8 +7,8 @@ import { CASES, rng, pick, int } from './property-support.mjs';
 
 const PIECES = ['a', ' ', 'b\nc', '"', '\\', '{}', 'é', '€', '😀', '𝄞', 'é€'];
 
-// Stand-in MCP server through the real spawn seam: it answers each JSON-RPC line, and the answer reaches the client
-// in chunks cut at byte positions drawn from the seed, so a chunk can end inside a multi-byte character.
+
+
 class ChunkingServer extends EventEmitter {
   constructor(next) {
     super();
@@ -23,7 +23,7 @@ class ChunkingServer extends EventEmitter {
   }
 
   answer(request) {
-    if (request.id === undefined) return; // Notifications get no response.
+    if (request.id === undefined) return;
     const result = request.method === 'initialize'
       ? { protocolVersion: '2025-03-26' }
       : { content: [{ type: 'text', text: request.params.arguments.pattern }] };

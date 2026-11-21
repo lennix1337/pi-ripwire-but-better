@@ -1,4 +1,4 @@
-// Explicit developer smoke; not part of portable npm test. Never calls a model.
+
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { projectChecks, navigate } from '../src/core.ts';

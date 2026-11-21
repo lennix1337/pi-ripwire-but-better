@@ -44,7 +44,7 @@ function cancellable(job, signal) {
   });
 }
 
-/** Routes one JSON-RPC response to the single in-flight request; anything else poisons the server. */
+// external: Unexpected JSON-RPC responses invalidate the server connection.
 function responseRouter(current, fail) {
   return response => {
     if (response.id == null) return;
@@ -69,14 +69,14 @@ function createServer(root, { binary, spawnProcess, timeoutMs, maxBytes }) {
     active?.reject(error);
     child.stdin.destroy();
     child.kill();
-    // Ripwire owns no detached descendants for the two allowed read tools.
+
     killTimer = setTimeout(() => child.kill('SIGKILL'), 1000);
     killTimer.unref?.();
   };
   child.on('error', error => fail(uncertain(`process error (${error.code || 'unknown'})`)));
   child.on('exit', () => { if (!failure) fail(uncertain('process exited')); });
   child.stdin.on('error', () => fail(uncertain('input stream failed')));
-  // Drain diagnostics, but never substitute them for a JSON-RPC response.
+  // external: Diagnostics are not JSON-RPC responses.
   child.stderr.resume();
   child.stdout.on('data', frameReader(maxBytes, responseRouter(() => active, fail), fail));
 
@@ -119,12 +119,12 @@ function createServer(root, { binary, spawnProcess, timeoutMs, maxBytes }) {
   };
 }
 
-/** Ends one request; the last one out arms the server's idle exit. */
+
 function release(server, servers, idleMs) {
   if (--server.queued > 0) return;
   clearTimeout(server.idleTimer);
   server.idleTimer = setTimeout(() => {
-    // Admission increments `queued` synchronously after the map lookup, so this check cannot race it.
+
     if (server.queued > 0 || servers.get(server.root) !== server) return;
     servers.delete(server.root);
     void server.close();
@@ -170,11 +170,11 @@ export function createResidentPool({ binary = 'ripwire', spawnProcess = spawn, m
         if (signal?.aborted) throw new Error('Resident request cancelled before dispatch');
         return acquire(root);
       });
-      // Serialize admission only; the caller observes this rejection through `job`.
+
       admission = acquired.then(() => {}, () => {});
       const job = acquired.then(server => {
         const request = server.chain.then(() => server.request(action, query, signal));
-        server.chain = request.catch(() => { /* The request caller retains the error. */ });
+        server.chain = request.catch(() => {  });
         return request.finally(() => release(server, servers, idleMs));
       }).finally(() => { pending--; });
       return cancellable(job, signal);
