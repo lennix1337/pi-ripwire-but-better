@@ -17,8 +17,8 @@ test('untracked filename/content boundaries cannot collide', async t => {
   assert.notEqual((await fingerprint(root)).digest, first.digest);
 });
 
-// GitHub's Windows runners hand out an 8.3 short temp path (RUNNER~1); any root reached
-// through a link or alias must fingerprint the same files as its canonical path.
+// external: Windows GitHub runners can use 8.3 aliases for temporary paths.
+
 test('a root given through a link fingerprints like its canonical path', async t => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'rw-alias-'));
   t.after(() => rm(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));

@@ -1,4 +1,4 @@
-// Small, explicit, offline checks. These do not stand for project-wide validation.
+
 export const profiles = [
   {
     name: 'dentai', sentinels: ['pnpm-workspace.yaml', 'apps/api/scripts/operational-diagnostics.node-test.mjs'],

@@ -10,7 +10,7 @@ export const actions = ['map', 'task', 'search', 'symbol', 'callers', 'callees',
 const hash = value => createHash('sha256').update(value).digest('hex');
 const maxLog = 4 * 1024 * 1024;
 export const defaultStore = () => process.env.PI_RIPWIRE_EVIDENCE_DIR || path.join(os.homedir(), '.pi', 'agent', 'evidence', 'pi-ripwire');
-// quality/test_gate/edit_check build a HEAD checkout; killing them mid-way is what leaves stale trees behind.
+// external: Ripwire quality and test-gate create temporary HEAD checkouts.
 const slowActions = new Set(['quality', 'test_gate', 'edit_check']);
 export const navigationTimeout = action => slowActions.has(action) ? 120000 : 60000;
 
@@ -20,9 +20,9 @@ export function pidAlive(pid) {
 
 const cacheBases = () => [...new Set([process.env.XDG_CACHE_HOME, process.env.TMPDIR, process.env.TMP, process.env.TEMP, os.tmpdir()].filter(Boolean).map(dir => path.resolve(dir)))];
 
-// Ripwire checks HEAD out into <cache>/ripwire-qhead-<pid> and removes it on a normal exit. A killed run
-// leaves it behind, and every later Ripwire call then slows by seconds (Genexus18MCP grep: 10-21 s with four
-// stale trees, 0.6 s without). Only trees whose owning process is gone are removed.
+// external: Killed Ripwire processes can leave temporary checkout trees behind.
+
+
 export async function reapStaleHeadTrees({ bases = cacheBases(), alive = pidAlive } = {}) {
   const removed = [];
   for (const base of bases) {
@@ -40,17 +40,17 @@ export async function reapStaleHeadTrees({ bases = cacheBases(), alive = pidAliv
   return removed;
 }
 
-// The output goes to a model, not a terminal: color codes are tokens that carry nothing (pwsh error records were ~18% escapes).
+// external: Terminal color codes add noise to model-facing output.
 function plainOutputEnv() {
   const { FORCE_COLOR: _forced, ...env } = process.env;
   return { ...env, NO_COLOR: '1' };
 }
 
-// Bytes of the UTF-8 sequence that starts with this byte; 0 for a continuation byte.
+
 const sequenceWidth = byte => (byte < 0x80 ? 1 : byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 0);
 
-// The end of the whole characters in a capture cut at the byte limit: a sequence the cut split (its lead byte is
-// within the last three bytes) is excluded, so the partial tail is not decoded to U+FFFD.
+// external: A truncated UTF-8 sequence would otherwise decode as a replacement character.
+
 function wholeCharactersEnd(bytes) {
   for (let i = bytes.length - 1; i >= Math.max(0, bytes.length - 4); i--) {
     const width = sequenceWidth(bytes[i]);
@@ -59,12 +59,12 @@ function wholeCharactersEnd(bytes) {
   return bytes.length;
 }
 
-// Complete output decodes unchanged; only a capture cut at the limit is trimmed.
+
 export function captureText(bytes, truncated) {
   return bytes.subarray(0, truncated ? wholeCharactersEnd(bytes) : bytes.length).toString('utf8');
 }
 
-// `stderr: false` drops diagnostics from the output, for callers that hash it as data.
+
 export async function execute(command, args, { cwd, signal, timeout = 30000, limit = maxLog, stderr = true } = {}) {
   if (signal?.aborted) throw new Error('Cancelled before execution');
   return new Promise((resolve, reject) => {
@@ -84,8 +84,8 @@ export async function execute(command, args, { cwd, signal, timeout = 30000, lim
         const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
         killer.on('error', () => child.kill());
       } else {
-        try { process.kill(-child.pid, 'SIGTERM'); } catch { /* Already exited. */ }
-        killTimer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already exited. */ } }, 500);
+        try { process.kill(-child.pid, 'SIGTERM'); } catch {  }
+        killTimer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {  } }, 500);
       }
     };
     const collect = data => { const room = limit - bytes; if (room > 0) chunks.push(data.subarray(0, room)); bytes += data.length; if (bytes > limit) stop('output_limit'); };
@@ -93,7 +93,7 @@ export async function execute(command, args, { cwd, signal, timeout = 30000, lim
     const abort = () => stop('cancelled'); signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => stop('timeout'), timeout);
     const cleanup = () => { clearTimeout(timer); clearTimeout(killTimer); signal?.removeEventListener('abort', abort); };
-    // A spawn failure (ENOENT, EACCES) fires before the process exists: pid is undefined and nothing ran.
+    // external: Node spawn failures can happen before a process exists.
     child.on('error', error => { cleanup(); if (child.pid === undefined) error.notStarted = true; reject(error); });
     child.on('close', (code, terminationSignal) => {
       cleanup(); resolve({ code, signal: terminationSignal, reason, output: captureText(Buffer.concat(chunks), bytes > limit), bytes, truncated: bytes > limit });
@@ -129,13 +129,13 @@ export function ripwireArgs(root, action, query = '') {
 
 export async function fingerprint(root, { canonicalize = realpath } = {}) {
   const git = async args => {
-    // Warnings such as core.autocrlf's go to stderr and disappear once Git refreshes the index; they are not source.
+    // external: Git index refresh can emit transient core.autocrlf warnings on stderr.
     const result = await execute('git', ['-C', root, ...args], { stderr: false });
     if (result.code !== 0 || result.truncated || result.reason) throw new Error('Cannot establish source fingerprint');
     return result.output;
   };
   const diffArgs = ['--binary', '--no-ext-diff', '--no-textconv'];
-  // Independent read-only Git queries; no cached success or skipped source checks.
+
   const [revision, diff, staged, untracked] = await Promise.all([
     execute('git', ['-C', root, 'rev-parse', '--verify', '--quiet', 'HEAD']),
     git(['diff', ...diffArgs]),
@@ -146,10 +146,10 @@ export async function fingerprint(root, { canonicalize = realpath } = {}) {
   const head = revision.code === 0 ? revision.output.trim() : 'unborn';
   const files = untracked.split('\0').filter(Boolean).sort();
   const state = createHash('sha256').update(JSON.stringify([head, diff, staged])); let bytes = 0;
-  // Every untracked file is checked against the same root: canonicalise it once, not once per file.
+
   const canonicalRoot = await canonicalize(root);
   const containedRoot = target => target === root ? canonicalRoot : canonicalize(target);
-  // Bound I/O concurrency and retain sorted hashing order and the input budget.
+
   for (let offset = 0; offset < files.length; offset += 8) {
     const batch = await Promise.all(files.slice(offset, offset + 8).map(async file => {
       const target = await contained(root, file, { canonicalize: containedRoot });
@@ -161,7 +161,7 @@ export async function fingerprint(root, { canonicalize = realpath } = {}) {
     }
     const contents = await Promise.all(batch.map(async ({ target }) => hash(await readFile(target))));
     for (let i = 0; i < batch.length; i++) {
-      // Frame filenames and contents so a+bc cannot collide with ab+c.
+      // external: Hash framing prevents ambiguous filename and content concatenations.
       state.update(JSON.stringify([batch[i].file, contents[i]]));
     }
   }
@@ -169,10 +169,10 @@ export async function fingerprint(root, { canonicalize = realpath } = {}) {
 }
 
 export async function contained(root, relative, { canonicalize = realpath } = {}) {
-  // Independent canonicalisations, requested together: one filesystem round trip instead of two in sequence.
+
   const [candidate, canonicalRoot] = await Promise.all([canonicalize(path.resolve(root, relative)), canonicalize(root)]);
-  // Compare canonical to canonical: a root reached through a link or an 8.3 short name
-  // would otherwise make every file inside it look like an escape.
+  // external: Windows 8.3 paths and links can alias the canonical repository root.
+
   const rel = path.relative(canonicalRoot, candidate);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error('Path escapes project');
   return candidate;
@@ -209,7 +209,7 @@ export async function navigateResident({ root, action, query = '', signal, store
   return { ...receipt, ...page(result.output, 0, 6000) };
 }
 
-// Exported as a pure seam: the in-memory pager (navigate, projectChecks) is checked against the saved-evidence pager.
+
 export function page(output, offset, limit) {
   const bytes = Buffer.from(output);
   if (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) throw new Error('Offset must be a UTF-8 code point boundary; use nextOffset');
@@ -218,8 +218,8 @@ export function page(output, offset, limit) {
   return { output: bytes.subarray(offset, end).toString('utf8'), offset, nextOffset: end < bytes.length ? end : null, totalBytes: bytes.length };
 }
 
-// Offset of the last `limit` bytes of a log, moved forward when it falls inside a character:
-// page(output, tailStart(output, limit), limit) is the end of the log, where runners print their verdict.
+
+
 export function tailStart(output, limit) {
   const bytes = Buffer.from(output);
   let start = Math.max(0, bytes.length - limit);
@@ -240,7 +240,7 @@ export async function evidence({ id, offset = 0, limit = 6000, store = defaultSt
   }
   try {
     const { size } = await file.stat();
-    // One lookahead byte identifies a UTF-8 boundary without loading the full log.
+    // external: A byte limit can split a UTF-8 code point.
     const buffer = Buffer.alloc(Math.min(limit + 1, Math.max(0, size - offset)));
     let loaded = 0;
     while (loaded < buffer.length) {
@@ -291,20 +291,21 @@ export async function loadRecipes(root, { canonicalize = realpath } = {}) {
   if (config.version !== 1 || !config.checks || typeof config.checks !== 'object' || Array.isArray(config.checks)) throw new Error('Expected recipe version 1 and checks object');
   const entries = Object.entries(config.checks);
   for (const [name, recipe] of entries) validateRecipe(name, recipe);
-  // Working directories are independent of one another: check them together, then report the first failure in recipe order.
+
   const checked = await Promise.allSettled(entries.map(([, recipe]) => contained(root, recipe.cwd || '.', { canonicalize })));
   const failed = checked.find(result => result.status === 'rejected');
   if (failed) throw failed.reason;
   return { config, digest: hash(raw), origin };
 }
 
-// The exclusive marker is `lockPath`; parallel runs each hold `lockPath.<uuid>`. A starter creates its own marker first
-// and then looks for a conflicting one, so two processes that start together both see the other and one backs off.
+// external: Concurrent processes can create conflicting markers at the same time.
+
 async function exclusiveHolder(lockPath) {
   let marker;
-  try { marker = JSON.parse(await readFile(lockPath, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; marker = {}; /* Unreadable or half-written marker: treat as a non-speculative uncertain run. */ }
+  // external: An unreadable marker cannot establish that a run is safe to repeat.
+  try { marker = JSON.parse(await readFile(lockPath, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; marker = {}; }
   if (marker.speculative && !pidAlive(marker.pid)) {
-    // onEdit recipes are declared side-effect free, so a speculative marker whose Pi process died is safe to clear.
+    // external: Speculative onEdit recipes are declared side-effect free.
     await unlink(lockPath);
     return null;
   }
@@ -337,7 +338,7 @@ async function acquireLock(lockPath, { shared = false, name } = {}) {
     if (held) throw held;
     handle = await open(lockPath, 'wx', 0o600);
   }
-  // A parallel run of this process finished before we got here (see scheduled); anything left is another process or an uncertain end.
+
   const others = await parallelMarkers(lockPath);
   if (others.length) {
     await handle.close(); await unlink(lockPath);
@@ -348,8 +349,8 @@ async function acquireLock(lockPath, { shared = false, name } = {}) {
   return Object.assign(handle, { path: lockPath });
 }
 
-// Explicit runs of this process are queued (see queued), so a marker of this process, or of a process that is gone,
-// was left by a run that ended without a recorded outcome; a live foreign pid is another Pi session or subagent.
+// external: A live foreign pid can own a check in another Pi session.
+
 function heldMessage(marker, lockPath) {
   const check = `Check "${marker.name ?? 'unknown'}"${marker.id ? ` (run ${marker.id})` : ''}`;
   const since = Number.isFinite(marker.started) ? ` since ${new Date(marker.started).toISOString()}` : '';
@@ -360,9 +361,9 @@ function heldMessage(marker, lockPath) {
   return `${check} ended with its outcome uncertain${since}: ${evidence}. Its marker ${lockPath} blocks this repository until it is removed; remove it once you know what that run did, then call again. Nothing was started; never blindly replay.`;
 }
 
-// Pi runs a reply's tool calls together: over 14 days, 25 of 35 "check active" refusals were a second check of the same
-// reply (typecheck + unit). Explicit checks of one repository from this process therefore take turns, in call order:
-// recipes that declare `parallel` (they write nothing the source fingerprint sees) share a turn, every other one is alone in it.
+
+
+
 const schedules = new Map();
 function scheduled(lockPath, shared, run) {
   const state = schedules.get(lockPath) ?? { active: 0, exclusive: false, waiting: [] };
@@ -391,7 +392,7 @@ export async function projectChecks({ root, name = '', signal, store = defaultSt
   return projectChecksAt(await repositoryRoot(root), { name, signal, store, speculative });
 }
 
-// `root` must be a canonical repository root from repositoryRoot(); a caller that has resolved it does not start a second Git subprocess.
+
 export async function projectChecksAt(root, { name = '', signal, store = defaultStore(), speculative = false }) {
   const { config, digest, origin } = await loadRecipes(root);
   if (!name) return { schema: 'pi-ripwire/v1', root, origin, checks: Object.entries(config.checks).map(([name, recipe]) => ({ name, ...recipe })), policy: 'Explicit execution only. Review repository recipes before running; commands are trusted project code, not a sandbox. No automatic retries or evidence reuse.' };
@@ -405,7 +406,7 @@ export async function projectChecksAt(root, { name = '', signal, store = default
 }
 
 async function runLocked({ root, name, signal, store, speculative, recipe, digest, origin, lockPath }) {
-  // A call cancelled while it waited for the one before it never starts and leaves no receipt.
+  // external: A cancelled queued call has not started and has no receipt.
   if (signal?.aborted) throw new Error('Cancelled before execution; nothing was started');
   const lock = await acquireLock(lockPath, { shared: recipe.parallel === true && !speculative, name });
   const id = randomUUID(); const started = Date.now();
@@ -423,9 +424,9 @@ async function runLocked({ root, name, signal, store, speculative, recipe, diges
     const after = await fingerprint(root);
     const unchanged = before.digest === after.digest && digest === (await loadRecipes(root)).digest;
     receipt = { ...receipt, status: result.reason || (result.signal ? 'outcome_uncertain' : !unchanged ? 'source_changed' : result.code === 0 ? 'passed' : 'failed'), exitCode: result.code, elapsedMs: Date.now() - started, unchanged, after, truncated: result.truncated, interpretation: 'Only this named check; ignored inputs and full product flow not validated' };
-    // A speculative run we cancelled has exited (execute resolves on close), so its marker carries no uncertainty.
+    // external: A cancelled process must exit before its marker can be released.
     await save(store, id, output, receipt); completed = (!result.reason && result.signal === null) || (speculative && result.reason === 'cancelled');
-    // The failing assertion and the totals are at the end of a log; its beginning is project_evidence offset 0.
+
     return { ...receipt, ...page(output, tailStart(output, 4000), 4000) };
   } catch (error) {
     if (error.notStarted) executionStarted = false;
@@ -437,7 +438,7 @@ async function runLocked({ root, name, signal, store, speculative, recipe, diges
     throw error;
   } finally {
     await lock.close();
-    // Keep the marker if execution/state capture did not complete. User inspects it before removal.
+    // external: An uncertain execution must retain its marker to prevent an unsafe retry.
     if (completed || !executionStarted) await unlink(lock.path);
   }
 }

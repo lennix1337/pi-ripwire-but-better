@@ -5,9 +5,9 @@ import path from 'node:path';
 import { contained } from '../src/core.ts';
 import { CASES, rng, pick, int } from './property-support.mjs';
 
-// A fake filesystem of paths only, injected as `canonicalize`: RUNNER~1 is an 8.3-style alias of the real repository,
-// and two links inside it lead out of the project. The bug this guards (fdbc3b4) compared a canonical candidate
-// with a lexical root, so every file under an alias looked like an escape.
+// external: Windows 8.3 paths can alias a repository root.
+
+
 const base = path.resolve(os.tmpdir(), 'rw-containment');
 const realRoot = path.join(base, 'real', 'repo');
 const aliasRoot = path.join(base, 'RUNNER~1', 'repo');
@@ -26,7 +26,7 @@ const SEGMENTS = ['src', 'a.txt', '..', '.', 'escape', 'deep', 'link', '..x', 'x
 const ABSOLUTE = [outside, path.join(outside, 'x'), realRoot, aliasRoot, path.join(aliasRoot, 'b'), path.dirname(realRoot), path.join(base, 'real', 'repo-other', 'x')];
 const ROOTS = [aliasRoot, realRoot];
 
-// Model: the canonical location of the candidate when it lies inside the canonical root; otherwise the refusal.
+
 function expected(root, relative) {
   const location = canonicalize(path.resolve(root, relative));
   return within(location, realRoot) ? location : 'Path escapes project';

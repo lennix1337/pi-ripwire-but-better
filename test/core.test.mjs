@@ -38,16 +38,16 @@ test('source fingerprint catches tracked, staged, untracked changes', async t =>
   await writeFile(path.join(root, 'new.txt'), 'new'); assert.notEqual((await fingerprint(root)).digest, before.digest);
 });
 
-// Seen live 2026-10-24 (receipts d0a6f5e0, c2c2cbb6): an edit that restored a file to its committed content made
-// the first `git diff` print a core.autocrlf warning on stderr and refresh the index, so the next fingerprint
-// differed and the onEdit run ended source_changed. Git warnings are not source.
+// external: Git may emit a core.autocrlf warning while refreshing its index.
+
+
 test('source fingerprint ignores Git warnings that vanish once the index is refreshed', async t => {
   const { root } = await fixture(t);
   await execute('git', ['config', 'core.autocrlf', 'true'], { cwd: root });
   await writeFile(path.join(root, 'lf.ts'), 'a\nb\n'); await execute('git', ['add', 'lf.ts'], { cwd: root });
   await execute('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'lf'], { cwd: root });
   const clean = await fingerprint(root);
-  await new Promise(resolve => setTimeout(resolve, 1100)); // A new mtime second marks the index entry stat-dirty.
+  await new Promise(resolve => setTimeout(resolve, 1100));
   await writeFile(path.join(root, 'lf.ts'), 'a\nb\n');
   assert.equal((await fingerprint(root)).digest, clean.digest);
   assert.equal((await fingerprint(root)).digest, clean.digest);
@@ -91,13 +91,13 @@ test('failure is not retried, receipt remains available', async t => {
   assert.equal((await readdir(f.store)).filter(x => x.endsWith('.json')).length, 1);
 });
 
-// Test runners and compilers print the failing assertion and the totals last, so the page a check returns is the end
-// of its log: read from the beginning, the first 4 KB of a suite is a list of passing tests.
+
+
 test('a check returns the end of its output, where the runner prints the verdict', async t => {
   const log = exit => `for (let i = 0; i < 100; i++) console.log('ok ' + String(i).padStart(3, '0') + ' ' + 'x'.repeat(72)); console.log('VERDICT: 1 failed at src/thing.ts:42'); process.exit(${exit})`;
   const recipe = exit => ({ description: 'About 8 KB of output, verdict last', argv: [process.execPath, '-e', log(exit)], timeoutMs: 20000 });
   const f = await fixture(t, { red: recipe(1), green: recipe(0) });
-  // One rule for every status: a passing run's totals are at the end too.
+
   for (const [name, status] of [['red', 'failed'], ['green', 'passed']]) {
     const result = await projectChecks({ ...f, name });
     assert.equal(result.status, status);
@@ -120,8 +120,8 @@ test('timeout preserves uncertainty marker and prevents blind replay', async t =
   await assert.rejects(projectChecks({ ...f, name: 'wait' }), /outcome uncertain/);
 });
 
-// 14 days of sessions (2026-10-21..11-04): 35 "Prior check active" refusals, 25 of them a second check of the same
-// reply (typecheck + unit), which Pi runs together. Checks of one repository from one process now run in turn.
+
+
 test('explicit checks of one repository started together run one after the other', async t => {
   const slow = (label) => ({ description: label, argv: [process.execPath, '-e', `setTimeout(()=>console.log('${label}'),300)`], timeoutMs: 5000 });
   const f = await fixture(t, { typecheck: slow('types-ok'), unit: slow('unit-ok'), lint: slow('lint-ok') });
@@ -135,7 +135,7 @@ test('a queued check whose caller aborted never starts', async t => {
   const f = await fixture(t, { first: { description: 'Slow', argv: [process.execPath, '-e', 'setTimeout(()=>{},300)'], timeoutMs: 5000 }, second: { description: 'Marker', argv: [process.execPath, '-e', "require('fs').writeFileSync(process.argv[1],'ran')", path.join(os.tmpdir(), 'never')], timeoutMs: 5000 } });
   const controller = new AbortController();
   const first = projectChecks({ ...f, name: 'first' });
-  // Either call may reach the queue first, so the rejection is awaited from the start, not after the first check.
+
   const second = assert.rejects(projectChecks({ ...f, name: 'second', signal: controller.signal }), /Cancelled before execution/);
   controller.abort();
   assert.equal((await first).status, 'passed');
@@ -188,7 +188,7 @@ test('a launch that never started leaves a not_started receipt and releases the 
   assert.equal(receipt.status, 'not_started');
   assert.match(receipt.error, /ENOENT/);
   assert.match(receipt.error, /Nothing started/);
-  // The process never existed (no pid), so nothing is uncertain: the error repeats and other checks still run.
+
   await assert.rejects(projectChecks({ ...f, name: 'missing' }), /ENOENT/);
   assert.equal((await projectChecks({ ...f, name: 'smoke' })).status, 'passed');
 });
@@ -230,7 +230,7 @@ test('output cap and pre-aborted execution', async () => {
 
 test('navigation bounds output, stores full local log and nonzero status', async t => {
   const f = await fixture(t);
-  // node treats repo as script; this is an actual failed subprocess, not a fabricated success.
+
   const result = await navigate({ ...f, binary: process.execPath, action: 'map' });
   assert.equal(result.status, 'nonzero_exit'); assert.ok(result.id);
   assert.equal((await evidence({ ...f, id: result.id })).exitCode, result.exitCode);
@@ -263,8 +263,8 @@ test('recipes cannot escape root and malformed commands are rejected', async t =
   await assert.rejects(projectChecks(f), /Invalid recipe/);
 });
 
-// Concurrency is observed through the injected canonicaliser: a sequential implementation never starts the second
-// realpath while the first is pending, so the first call's wait runs out (300 ms) and the assertion fails.
+
+
 test('canonical path and canonical root are resolved together, not one after the other', async t => {
   const f = await fixture(t, {}, { 'source.txt': 'x' });
   const calls = []; let release; const second = new Promise(resolve => { release = resolve; });
@@ -304,7 +304,7 @@ test('recipe working directories are checked concurrently; an escaping one is st
 
 test('a fingerprint canonicalises the repository root once, not once per untracked file', async t => {
   const { root } = await fixtureRepo(t, {});
-  // Created after the commit, so they are untracked and each one goes through contained().
+
   for (let i = 0; i < 20; i++) await writeFile(path.join(root, `untracked${i}.txt`), 'x');
   const rootCalls = [];
   const canonicalize = target => { if (target === root) rootCalls.push(target); return realpath(target); };
@@ -313,9 +313,9 @@ test('a fingerprint canonicalises the repository root once, not once per untrack
   assert.ok(rootCalls.length <= 1, `root canonicalised ${rootCalls.length} times for 20 untracked files`);
 });
 
-// 14 days of sessions: typecheck and unit of one reply ran one after the other (the queue above), so the second
-// call's latency was both durations (project_checks p95 1.7 s -> 5.0 s in the paired bench). Recipes that declare
-// `parallel` write nothing the fingerprint sees, so they may overlap each other; every other check stays exclusive.
+
+
+
 const rendezvous = (dir, me, other) => ({ description: `Rendezvous ${me}`, parallel: true, timeoutMs: 8000, argv: [process.execPath, '-e', `
 const fs = require('fs'); const d = ${JSON.stringify(dir)};
 fs.writeFileSync(d + '/${me}.start', '1');

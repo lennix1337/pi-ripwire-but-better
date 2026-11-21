@@ -12,7 +12,7 @@ const failure = (error: unknown) => ({ ...textResult({ status: 'error', message:
 type ResidentPool = ReturnType<typeof createResidentPool>;
 const incomplete = ['timeout', 'cancelled', 'output_limit', 'transport_error'];
 
-/** Opt-in (PI_RIPWIRE_RESIDENT=1): search/task go to a session-owned MCP server; every other action stays on the CLI. */
+
 async function runNavigation(params: { root: string; action: string; query?: string }, signal: AbortSignal | undefined, resident: ResidentPool | undefined) {
   if (resident === undefined || !residentActions.has(params.action)) {
     const result = await navigate({ ...params, query: params.query, signal });
@@ -24,7 +24,7 @@ async function runNavigation(params: { root: string; action: string; query?: str
 
 const residentFromEnv = (env = process.env) => env.PI_RIPWIRE_RESIDENT === '1' ? createResidentPool({ binary: env.PI_RIPWIRE_BINARY || 'ripwire' }) : undefined;
 
-// A warning raised after Pi replaced or reloaded the session reaches a dead ctx, and Pi throws from it; that warning has nowhere to go.
+// external: Pi can reject UI calls after a session reload invalidates the context.
 const warn = (ctx: { ui: { notify(text: string, level: 'warning'): void } }, text: string) => {
   try { ctx.ui.notify(text, 'warning'); } catch (error) { if (!/ctx is stale/.test(error instanceof Error ? error.message : '')) throw error; }
 };
@@ -39,7 +39,7 @@ export default function extension(pi: ExtensionAPI) {
   pi.on('tool_result', async (event, ctx) => {
     if ((event.toolName === 'edit' || event.toolName === 'write') && !event.isError && typeof event.input.path === 'string') {
       const file = path.resolve(ctx.cwd, event.input.path);
-      // Awaited before the drain below: the edit drops the notes of runs on the sources it just replaced.
+
       await autocheck.edited(file).catch(error => warn(ctx, `pi-ripwire autocheck: ${error.message}`));
     }
     if (event.parentToolCallId) return;

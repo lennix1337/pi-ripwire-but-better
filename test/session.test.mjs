@@ -62,7 +62,7 @@ async function flow(t, optchat) {
 
 test('Pi SDK model-tool-execution-result loop works with no network or inference', t => flow(t));
 
-// `edits` is the first assistant message: one tool batch, which Pi executes concurrently.
+
 async function onEditFlow(t, edits) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'rw-onedit-'));
   const old = process.env.PI_RIPWIRE_EVIDENCE_DIR; process.env.PI_RIPWIRE_EVIDENCE_DIR = path.join(dir, 'evidence');
@@ -82,7 +82,7 @@ async function onEditFlow(t, edits) {
     streamSimple(model) {
       const step = script[round++];
       const message = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: step ? 'toolUse' : 'stop', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, content: step ?? [{ type: 'text', text: 'done' }] };
-      // The second step waits past the 0.75 s debounce, as a model thinking between tool calls would.
+
       const stream = createAssistantMessageEventStream(); setTimeout(() => { stream.push({ type: 'start', partial: message }); stream.push({ type: 'done', reason: message.stopReason, message }); stream.end(); }, round === 2 ? 4000 : 0); return stream;
     },
   });
@@ -104,7 +104,7 @@ test('an edit by the model triggers the onEdit check, and the explicit call reus
   { type: 'toolCall', id: 'edit-1', name: 'write', arguments: { path: 'src/a.ts', content: 'export const a = 1;\n' } },
 ]));
 
-// Seen live 2026-10-24: two edits in one batch produced no autocheck; the same edits one per turn did.
+
 test('two edits in one parallel tool batch still trigger the onEdit check', t => onEditFlow(t, [
   { type: 'toolCall', id: 'edit-1', name: 'edit', arguments: { path: 'src/a.ts', edits: [{ oldText: 'a = 0;', newText: 'a = 0; // probe' }] } },
   { type: 'toolCall', id: 'edit-2', name: 'edit', arguments: { path: 'src/a.ts', edits: [{ oldText: 'a = 0; // probe', newText: 'a = 0;' }] } },

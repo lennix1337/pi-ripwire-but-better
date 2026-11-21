@@ -10,7 +10,7 @@ async function gitRoot(dir) {
 
 const watched = (recipe, relative) => !recipe.watch || recipe.watch.some(prefix => relative === prefix || relative.startsWith(prefix.replace(/[\\/]?$/, '/')));
 
-// A finished run's note, worded once it is shown: `current` says whether the sources still have the digest it ran on.
+
 function note(result, current) {
   const seconds = (result.elapsedMs / 1000).toFixed(1);
   const head = `[autocheck] ${path.basename(result.root)} ${result.name}`;
@@ -19,35 +19,35 @@ function note(result, current) {
     return `${head} ${result.status === 'passed' ? 'passed' : `FAILED (exit ${result.exitCode})`} on ${why} (receipt ${result.id}); it is no evidence about the current code, and project_checks runs it again.`;
   }
   if (result.status === 'passed') return `${head} passed in ${seconds} s on the current sources (receipt ${result.id}); project_checks returns it without re-running.`;
-  // The end of the log: with a test runner, its first 1.5 KB is a list of passing tests.
+  // external: Test runners often print passing cases first and failures at the end of the log.
   return `${head} FAILED (exit ${result.exitCode}, ${seconds} s, receipt ${result.id}):\n${page(result.output, tailStart(result.output, 1500), 1500).output}`;
 }
 
-// After an edit, run the repository's onEdit recipes in the background so the explicit project_checks call,
-// or the next tool result, already has the answer. Results are reused only for the identical source digest.
+
+
 export function createAutocheck({ run = projectChecks, fingerprintOf = fingerprint, recipesOf = loadRecipes, rootOf = gitRoot, debounceMs = 750, maxAgeMs = 600000, now = Date.now } = {}) {
-  // Notes wait here until the next tool result: { root, text } or, for a finished run, { root, result }.
+
   const roots = new Map(); const dirs = new Map(); const unconfigured = new Set(); let notes = [];
   const state = root => roots.get(root) ?? roots.set(root, { timer: null, controller: null, running: null, runningName: null, halt: false, results: new Map() }).get(root);
 
-  // Runs one recipe of a sweep and records its note. Returns false when the sweep must stop.
+
   async function runOne(root, s, name, signal) {
     s.runningName = name;
     s.running = run({ root, name, signal, speculative: true });
     let result;
     try { result = await s.running; } catch (error) {
-      // CHECK_ACTIVE: an explicit or foreign check owns the repository; it will produce its own evidence.
-      // An aborted sweep was superseded by a newer edit or an explicit call.
+      // external: Another check can hold the repository lock and produce its own evidence.
+
       if (error.code !== 'CHECK_ACTIVE' && !signal.aborted) notes.push({ root, text: `[autocheck] ${path.basename(root)} ${name} could not run: ${error.message}` });
       return false;
     } finally { s.running = null; s.runningName = null; }
     if (result.status !== 'passed' && result.status !== 'failed') {
-      // A newer edit already reschedules a superseded run; anything else (sources changed by a tool or the
-      // recipe itself, timeout, uncertain exit) leaves no result, so the agent must hear about it.
+      // external: A timeout or uncertain exit leaves no conclusive result.
+
       if (!signal.aborted) notes.push({ root, text: `[autocheck] ${path.basename(root)} ${name} ended ${result.status} (receipt ${result.id}); nothing to reuse, so project_checks will run it again.` });
       return false;
     }
-    // A newer edit superseded this run while its process was finishing: its sources are gone, and the rerun reports.
+    // external: An edit can supersede a run while its process is finishing.
     if (signal.aborted) return false;
     s.results.set(name, { result, at: now() });
     notes.push({ root, result });
@@ -56,12 +56,12 @@ export function createAutocheck({ run = projectChecks, fingerprintOf = fingerpri
 
   async function sweep(root, names) {
     const s = state(root);
-    // This sweep owns the controller from the start: an edit or an explicit claim that arrives while it waits below
-    // must be able to cancel it, and `halt` is cleared before the wait so that a claim during it is not undone.
+    // external: An explicit claim can arrive while a cancelled run still holds the lock.
+
     s.controller?.abort();
     const controller = new AbortController(); s.controller = controller; s.halt = false;
-    // A run cancelled by the previous edit still holds the lock until its process exits.
-    if (s.running) await s.running.catch(() => { /* Its own sweep already handled the outcome. */ });
+    // external: A cancelled process retains its lock until it exits.
+    if (s.running) await s.running.catch(() => {  });
     for (const name of names) {
       if (controller.signal.aborted || s.halt || !(await runOne(root, s, name, controller.signal))) break;
     }
@@ -75,7 +75,7 @@ export function createAutocheck({ run = projectChecks, fingerprintOf = fingerpri
     if (!root) return;
     let config;
     try { ({ config } = await recipesOf(root)); } catch (error) {
-      // Nothing to run. Tell the agent once per repository, not the user on every edit.
+
       if (error.code !== 'NO_RECIPES') throw error;
       if (!unconfigured.has(root)) {
         unconfigured.add(root);
@@ -103,19 +103,19 @@ export function createAutocheck({ run = projectChecks, fingerprintOf = fingerpri
     return { ...hit.result, reused: { ageMs: now() - hit.at, basis: 'onEdit run on the identical HEAD/diff/untracked digest; ignored inputs not covered. Pass fresh=true to re-run.' } };
   }
 
-  // Called before an explicit project_checks run. Returns a reusable result, or null after making sure no
-  // speculative run still holds the repository lock. Reusing a result never interrupts the sweep in progress.
+
+
   async function claim(root, name, { fresh = false } = {}) {
     const s = roots.get(root);
     if (!s) return null;
-    if (s.running && s.runningName === name) await s.running.catch(() => { /* The sweep records its own failure. */ });
+    if (s.running && s.runningName === name) await s.running.catch(() => {  });
     const hit = fresh ? null : await reusable(root, s, name);
     if (hit) return hit;
     clearTimeout(s.timer); s.timer = null;
     s.halt = true;
     if (s.running) {
       s.controller?.abort();
-      await s.running.catch(() => { /* The sweep records its own failure; the explicit run proceeds either way. */ });
+      await s.running.catch(() => {  });
     }
     return null;
   }
@@ -123,8 +123,8 @@ export function createAutocheck({ run = projectChecks, fingerprintOf = fingerpri
   return {
     edited,
     claim,
-    // A run's note says "on the current sources" only after checking that they still have the digest it ran on: a
-    // shell command, or an edit whose own sweep has not started yet, may have changed them since the run finished.
+    // external: A shell command can change the source digest after a run finishes.
+
     async drainNotes() {
       const out = notes; notes = [];
       const digests = new Map();

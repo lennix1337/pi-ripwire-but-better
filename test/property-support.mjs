@@ -1,4 +1,4 @@
-// Seeded generators for property tests. Failing assertions name their seed, so a failing case reproduces from it.
+
 export const CASES = 200;
 
 export function rng(seed) {
